@@ -1,4 +1,4 @@
-cat > ~/Desktop/bot.js << 'ENDOFFILE'
+cat > ~/Desktop/bot.js << "ENDOFFILE"
 var express = require("express");
 var app = express();
 app.use(express.urlencoded({ extended: false }));
