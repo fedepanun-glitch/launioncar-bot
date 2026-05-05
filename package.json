@@ -1,7 +1,6 @@
 {
   "name": "launioncar-bot",
   "version": "1.0.0",
-  "description": "Bot WhatsApp La Unión Car SRL",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
