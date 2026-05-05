@@ -20,7 +20,7 @@ app.post("/webhook", async function(req, res) {
   if (historiales[from].length > 16) historiales[from] = historiales[from].slice(-16);
   var respuesta = "No pude procesar el mensaje.";
   try {
-    var response = await ai.messages.create({ model: "claude-sonnet-4-20250514", max_tokens: 800, system: "Sos el asistente de La Union Car SRL. Responde en español argentino informal. Registras ventas, compras, cobros y gastos. Por ahora responde que el bot esta funcionando y que pronto podras registrar operaciones.", messages: historiales[from] });
+    var response = await ai.messages.create({ model: "claude-haiku-4-5-20251001", max_tokens: 800, system: "Sos el asistente de La Union Car SRL. Responde en español argentino informal. Registras ventas, compras, cobros y gastos. Por ahora responde que el bot esta funcionando y que pronto podras registrar operaciones.", messages: historiales[from] });
     respuesta = response.content[0] ? response.content[0].text : "Sin respuesta";
     historiales[from].push({ role: "assistant", content: respuesta });
   } catch(e) { console.error(e); respuesta = "Error: " + e.message; }
