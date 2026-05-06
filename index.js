@@ -10,7 +10,19 @@ var ai = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 var twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 var historiales = {};
 
-var SYSTEM = "Sos el asistente de La Union Car SRL, empresa argentina de transporte y venta de combustible. Interpretas mensajes en lenguaje natural argentino informal.\n\nCAMIONES: UC-01=Enrique Cefferino, UC-02=Juan Benitez, UC-03=Fernando Freire, UC-04=Gustavo Fernandez, UC-05=Pablo Herrera, UC-06=Juan Romero.\n\nPRODUCTOS: gasoil/go/g2=gas_oil_g2, gasoil premium/euro=gas_oil_premium, super/sup/nafta=nafta_super, infinia=infinia_diesel.\n\nCUANDO VES NUMEROS: Un numero grande sin contexto son litros. El numero despues de 'a $' o 'a' es el precio por litro. M=millones, K=miles.\n\nEJEMPLOS:\n'Enrique cargo 30000 de gasoil a 1500 en YPF' => registrar_compra, litros:30000, precio_litro:1500, producto:gas_oil_g2, proveedor:YPF, camion:UC-01\n'cargo 30000 de sup a 1385 en Emanuel' => registrar_compra, litros:30000, precio_litro:1385, producto:nafta_super, proveedor:Emanuel Derocchi\n'vendimos 15000 a Petromas a 1800' => registrar_venta, litros:15000, precio_litro:1800, cliente:Petromas\n'llego pago Petromas 52M cheques' => registrar_cobro, monto:52000000, cliente:Petromas, tipo:cheque\n'pagamos a Copsa 10M' => registrar_gasto, monto:10000000, proveedor:Copsa\n'stock?' => consultar_stock\n'cuanto debe Petromas?' => consultar_saldo, cliente:Petromas\n'ventas de hoy' => consultar_ventas_hoy\n'alertas' => consultar_alertas\n\nSiempre responde JSON puro sin markdown:\n{\"accion\":\"nombre\",\"datos\":{\"litros\":number,\"precio_litro\":number,\"producto\":string,\"cliente\":string,\"proveedor\":string,\"camion\":string,\"monto\":number,\"tipo\":string,\"descripcion\":string},\"mensaje\":\"respuesta corta informal con emojis\"}\n\nAcciones: registrar_compra, registrar_venta, registrar_cobro, registrar_gasto, consultar_stock, consultar_saldo, consultar_ventas_hoy, consultar_alertas, responder.";
+var SYSTEM = "Sos el asistente de La Union Car SRL, empresa argentina de transporte y venta de combustible. Interpretas mensajes en lenguaje natural argentino informal.\n\nCAMIONES: UC-01=Enrique Cefferino, UC-02=Juan Benitez, UC-03=Fernando Freire, UC-04=Gustavo Fernandez, UC-05=Pablo Herrera, UC-06=Juan Romero.\n\nPRODUCTOS: gasoil/go/g2=gas_oil_g2, gasoil premium/euro=gas_oil_premium, super/sup/nafta=nafta_super, infinia=infinia_diesel.\n\nCUANDO VES NUMEROS: Un numero grande sin contexto son litros. El numero despues de 'a $' o 'a' es el precio por litro. M=millones, K=miles.\n\nEJEMPLOS:\n'Enrique cargo 30000 de gasoil a 1500 en YPF' => registrar_compra, litros:30000, precio_litro:1500, producto:gas_oil_g2, proveedor:YPF, camion:UC-01\n'cargo 30000 de sup a 1385 en Emanuel' => registrar_compra, litros:30000, precio_litro:1385, producto:nafta_super, proveedor:Emanuel Derocchi\n'vendimos 15000 a Petromas a 1800' => registrar_venta, litros:15000, precio_litro:1800, cliente:Petromas\n'llego pago Petromas 52M cheques' => registrar_cobro, monto:52000000, cliente:Petromas, tipo:cheque\n'pagamos a Copsa 10M' => registrar_gasto, monto:10000000, proveedor:Copsa\n'stock?' => consultar_stock\n'cuanto debe Petromas?' => consultar_saldo, cliente:Petromas\n'ventas de hoy' => consultar_ventas_hoy\n'alertas' => consultar_alertas\n\nSiempre responde JSON puro sin markdown:\n{\"accion\":\"nombre\",\"datos\":{\"litros\":number,\"precio_litro\":number,\"producto\":string,\"cliente\":string,\"proveedor\":string,\"camion\":string,\"monto\":number,\"tipo\":string,\"descripcion\":string},\"mensaje\":\"respuesta corta informal con emojis\"}\n\nAcciones: registrar_compra, registrar_venta, registrar_cobro, registrar_gasto, registrar_venc_camion, registrar_venc_chofer, consultar_stock, consultar_saldo, consultar_ventas_hoy, consultar_alertas, responder.
+
+VENCIMIENTOS DE CAMIONES - registrar_venc_camion:
+- 'VTV del UC-01 vence el 15/08/2026' => registrar_venc_camion, camion:UC-01, tipo:vtv, fecha_vencimiento:2026-08-15
+- 'seguro del UC-03 vence en enero 2027' => registrar_venc_camion, camion:UC-03, tipo:seguro, fecha_vencimiento:2027-01-01
+- Tipos camion: vtv, seguro, habilitacion_cnrt, extintor, cisterna_adr, service
+
+VENCIMIENTOS DE CHOFERES - registrar_venc_chofer:
+- 'registro de Enrique vence el 20/09/2026' => registrar_venc_chofer, chofer:Enrique, tipo:registro_conducir, fecha_vencimiento:2026-09-20
+- 'psicofisico de Fernando vence en marzo 2027' => registrar_venc_chofer, chofer:Fernando, tipo:psicofisico, fecha_vencimiento:2027-03-01
+- Tipos chofer: registro_conducir, seguro_art, cargas_peligrosas_cnrt, psicofisico, conduccion_defensiva, libreta_sanitaria
+
+Para fechas siempre usar formato YYYY-MM-DD.";
 
 function hoy() { return new Date().toISOString().split("T")[0]; }
 
@@ -106,6 +118,43 @@ async function ejecutar(accion, datos) {
       if (!r.data || !r.data.length) return { ok: true, msg: "Sin vencimientos urgentes. Todo en orden!" };
       var lineas = r.data.map(function(a) { return a.entidad + " - " + a.documento + ": " + (a.dias_restantes < 0 ? "VENCIDO hace " + Math.abs(a.dias_restantes) + " dias" : "vence en " + a.dias_restantes + " dias"); });
       return { ok: true, msg: "Alertas:\n" + lineas.join("\n") };
+    }
+    if (accion === "registrar_venc_camion") {
+      var cam = await buscar("camiones", "codigo", datos.camion);
+      if (!cam) return { ok: false, msg: "No encontre el camion " + (datos.camion || "?") + ". Usa UC-01, UC-02, etc." };
+      if (!datos.fecha_vencimiento) return { ok: false, msg: "Falta la fecha de vencimiento." };
+      if (!datos.tipo) return { ok: false, msg: "Falta el tipo de documento (vtv, seguro, extintor, etc.)." };
+      var e = await db.from("documentos_camiones").insert([{
+        camion_id: cam.id,
+        tipo: datos.tipo,
+        fecha_vencimiento: datos.fecha_vencimiento,
+        fecha_emision: datos.fecha_emision || null,
+        notas: datos.descripcion || null
+      }]);
+      if (e.error) return { ok: false, msg: e.error.message };
+      return { ok: true, msg: "Vencimiento registrado
+Camion: " + cam.codigo + "
+Documento: " + datos.tipo + "
+Vencimiento: " + datos.fecha_vencimiento };
+    }
+    if (accion === "registrar_venc_chofer") {
+      var chof = await buscar("choferes", "apellido", datos.chofer);
+      if (!chof) chof = await buscar("choferes", "nombre", datos.chofer);
+      if (!chof) return { ok: false, msg: "No encontre al chofer " + (datos.chofer || "?") };
+      if (!datos.fecha_vencimiento) return { ok: false, msg: "Falta la fecha de vencimiento." };
+      if (!datos.tipo) return { ok: false, msg: "Falta el tipo de documento." };
+      var e = await db.from("documentos_choferes").insert([{
+        chofer_id: chof.id,
+        tipo: datos.tipo,
+        fecha_vencimiento: datos.fecha_vencimiento,
+        fecha_emision: datos.fecha_emision || null,
+        notas: datos.descripcion || null
+      }]);
+      if (e.error) return { ok: false, msg: e.error.message };
+      return { ok: true, msg: "Vencimiento registrado
+Chofer: " + chof.apellido + "
+Documento: " + datos.tipo + "
+Vencimiento: " + datos.fecha_vencimiento };
     }
     return { ok: true, msg: null };
   } catch (e) {
