@@ -47,7 +47,7 @@ async function ejecutar(accion, datos) {
       var l = parseMonto(datos.litros);
       var p = parseMonto(datos.precio_litro);
       if (!l || !p) return { ok: false, msg: "Faltan litros o precio. Decime cuantos litros y a que precio." };
-      var e = await db.from("compras").insert([{ proveedor_id: prov ? prov.id : null, camion_id: cam ? cam.id : null, fecha: hoy(), producto: mapProducto(datos.producto), litros: l, precio_litro: p, estado_pago: "pagada" }]);
+      var e = await db.from("compras").insert([{ proveedor_id: prov ? prov.id : null, fecha: hoy(), producto: mapProducto(datos.producto), litros: l, precio_litro: p, estado_pago: "pagada" }]);
       if (e.error) return { ok: false, msg: e.error.message };
       return { ok: true, msg: "Compra registrada\nProveedor: " + (prov ? prov.nombre : datos.proveedor || "?") + "\nLitros: " + l.toLocaleString("es-AR") + "\nPrecio: " + fmt(p) + "/L\nTotal: " + fmt(l * p) };
     }
@@ -57,7 +57,7 @@ async function ejecutar(accion, datos) {
       var l = parseMonto(datos.litros);
       var p = parseMonto(datos.precio_litro);
       if (!l || !p) return { ok: false, msg: "Faltan litros o precio. Decime cuantos litros y a que precio." };
-      var e = await db.from("ventas").insert([{ cliente_id: cli ? cli.id : null, camion_id: cam ? cam.id : null, fecha: hoy(), producto: mapProducto(datos.producto), litros: l, precio_litro_venta: p, condicion_pago: datos.forma_pago || "cuenta_corriente", estado_cobro: datos.forma_pago === "efectivo" ? "cobrado" : "pendiente" }]);
+      var e = await db.from("ventas").insert([{ cliente_id: cli ? cli.id : null, fecha: hoy(), producto: mapProducto(datos.producto), litros: l, precio_litro_venta: p, condicion_pago: datos.forma_pago || "cuenta_corriente", estado_cobro: datos.forma_pago === "efectivo" ? "cobrado" : "pendiente" }]);
       if (e.error) return { ok: false, msg: e.error.message };
       return { ok: true, msg: "Venta registrada\nCliente: " + (cli ? cli.nombre : datos.cliente || "?") + "\nLitros: " + l.toLocaleString("es-AR") + "\nPrecio: " + fmt(p) + "/L\nTotal: " + fmt(l * p) };
     }
@@ -74,7 +74,7 @@ async function ejecutar(accion, datos) {
       var cam = await buscar("camiones", "codigo", datos.camion);
       var m = parseMonto(datos.monto);
       if (!m) return { ok: false, msg: "Falta el monto." };
-      var e = await db.from("gastos_camiones").insert([{ camion_id: cam ? cam.id : null, fecha: hoy(), categoria: datos.categoria || "otro", monto: m, descripcion: datos.descripcion || null, proveedor: datos.proveedor || null }]);
+      var e = await db.from("gastos_camiones").insert([{ fecha: hoy(), categoria: datos.categoria || "otro", monto: m, descripcion: datos.descripcion || null, proveedor: datos.proveedor || null }]);
       if (e.error) return { ok: false, msg: e.error.message };
       return { ok: true, msg: "Gasto registrado\nMonto: " + fmt(m) + (datos.proveedor ? "\nA: " + datos.proveedor : "") };
     }
