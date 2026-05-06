@@ -11,9 +11,7 @@ var twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUT
 var historiales = {};
 
 var SYSTEM = "Sos el asistente de La Union Car SRL. Registras ventas, compras, cobros, gastos y vencimientos. Responde JSON: {accion:string,datos:{},mensaje:string}";
-VENCIMIENTOS DE CAMIONES - registrar_venc_camion:
-- 'VTV del UC-01 vence el 15/08/2026' => registrar_venc_camion, camion:UC-01, tipo:vtv, fecha_vencimiento:2026-08-15
-- 'seguro del UC-03 vence en enero 2027' => registrar_venc_camion, camion:UC-03, tipo:seguro, fecha_vencimiento:2027-01-01
+VENCIMIENTOS DE CAMIONES - registrar_venc_camion:- 'VTV del UC-01 vence el 15/08/2026' => registrar_venc_camion, camion:UC-01, tipo:vtv, fecha_vencimiento:2026-08-15- 'seguro del UC-03 vence en enero 2027' => registrar_venc_camion, camion:UC-03, tipo:seguro, fecha_vencimiento:2027-01-01
 - Tipos camion: vtv, seguro, habilitacion_cnrt, extintor, cisterna_adr, service
 
 VENCIMIENTOS DE CHOFERES - registrar_venc_chofer:
