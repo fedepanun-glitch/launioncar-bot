@@ -132,10 +132,7 @@ async function ejecutar(accion, datos) {
         notas: datos.descripcion || null
       }]);
       if (e.error) return { ok: false, msg: e.error.message };
-      return { ok: true, msg: "Vencimiento registrado
-Camion: " + cam.codigo + "
-Documento: " + datos.tipo + "
-Vencimiento: " + datos.fecha_vencimiento };
+      return { ok: true, msg: "Vencimiento registrado\nCamion: " + cam.codigo + "\nDocumento: " + datos.tipo + "\nVencimiento: " + datos.fecha_vencimiento };
     }
     if (accion === "registrar_venc_chofer") {
       var chof = await buscar("choferes", "apellido", datos.chofer);
@@ -151,10 +148,7 @@ Vencimiento: " + datos.fecha_vencimiento };
         notas: datos.descripcion || null
       }]);
       if (e.error) return { ok: false, msg: e.error.message };
-      return { ok: true, msg: "Vencimiento registrado
-Chofer: " + chof.apellido + "
-Documento: " + datos.tipo + "
-Vencimiento: " + datos.fecha_vencimiento };
+      return { ok: true, msg: "Vencimiento registrado\nChofer: " + chof.apellido + "\nDocumento: " + datos.tipo + "\nVencimiento: " + datos.fecha_vencimiento };
     }
     return { ok: true, msg: null };
   } catch (e) {
