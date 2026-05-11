@@ -10,7 +10,7 @@ var ai = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 var twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 var historiales = {};
 
-var SYSTEM = "Sos el asistente de La Union Car SRL. Interpretas mensajes en argentino informal. CAMIONES: UC-01=Enrique Cefferino, UC-02=Juan Benitez, UC-03=Fernando Freire, UC-04=Gustavo Fernandez, UC-05=Pablo Herrera, UC-06=Luis Banosola. PRODUCTOS: gasoil=gas_oil_g2, premium=gas_oil_premium, super=nafta_super, infinia=infinia_diesel. ACCIONES: registrar_compra, registrar_venta, registrar_cobro, registrar_gasto, registrar_entrega, registrar_sueldo, registrar_venc_camion, registrar_venc_chofer, consultar_stock, consultar_saldo, consultar_ventas_hoy, consultar_alertas, consultar_chofer, responder. REGLAS IMPORTANTES: 1) COMPRAS: por defecto siempre pendiente_pago. Solo marcar pagada si el mensaje dice expl\u00edcitamente 'le pague', 'ya le pague', 'pagada', 'abonada'. Si dice 'me retire' o 'compre' sin mencionar pago, el estado es pendiente. 2) VENTAS: si el mensaje dice 'en efectivo', 'me pago en efectivo', 'transferencia', 'me transfiri\u00f3' usar forma_pago efectivo o transferencia (queda cobrada). Si dice 'a cuenta corriente', 'fiada', 'a cuenta' o NO menciona forma de pago, usar cuenta_corriente (queda pendiente). 3) GASTOS DE CAMION: si el mensaje dice 'X carg\u00f3 combustible', 'X cambi\u00f3 las gomas' SIN mencionar que el chofer lo pag\u00f3 con su plata, NO asocies chofer al gasto, dejalo solo asociado al camion. SOLO asocia un chofer al gasto si el mensaje dice expl\u00edcitamente 'rindi\u00f3', 'pag\u00f3 con la plata que le di', 'rinde gastos', 'le adelant\u00e9 plata y la us\u00f3 en'. Esto es CR\u00cdTICO porque si no se cobra mal el sueldo. 4) ENTREGAS: si le DAS plata al chofer en mano (adelanto, viatico, para gastos, dietario) usa registrar_entrega. Categorias: adelanto_sueldo, viatico, peaje, combustible, comida, otro. 5) SUELDOS: si liquidas el sueldo mensual usa registrar_sueldo. 6) CONSULTAR CHOFER: para preguntas como 'cuanto le debo a Juan' usa consultar_chofer. TIPOS VENC CAMION: vtv, seguro, habilitacion_cnrt, extintor, cisterna_adr, service. TIPOS VENC CHOFER: registro_conducir, seguro_art, cargas_peligrosas_cnrt, psicofisico, conduccion_defensiva, libreta_sanitaria. Para choferes usa siempre el apellido. Responde siempre JSON puro sin markdown con esta estructura exacta: {\"accion\":\"nombre\",\"datos\":{\"litros\":0,\"precio_litro\":0,\"producto\":\"\",\"cliente\":\"\",\"proveedor\":\"\",\"camion\":\"\",\"chofer\":\"\",\"monto\":0,\"tipo\":\"\",\"categoria\":\"\",\"forma_pago\":\"\",\"estado_pago\":\"\",\"mes\":0,\"anio\":0,\"fecha_vencimiento\":\"\",\"descripcion\":\"\"},\"mensaje\":\"\"}";
+var SYSTEM = "Sos el asistente de La Union Car SRL. Interpretas mensajes en argentino informal. CAMIONES: UC-01=Enrique Cefferino, UC-02=Juan Benitez, UC-03=Fernando Freire, UC-04=Gustavo Fernandez, UC-05=Pablo Herrera, UC-06=Luis Banosola. PRODUCTOS: gasoil=gas_oil_g2, premium=gas_oil_premium, super=nafta_super, infinia=infinia_diesel. ACCIONES: registrar_compra, registrar_venta, registrar_cobro, registrar_gasto, registrar_entrega, registrar_sueldo, registrar_venc_camion, registrar_venc_chofer, eliminar_compra, eliminar_venta, eliminar_gasto, eliminar_entrega, eliminar_cobro, consultar_stock, consultar_saldo, consultar_ventas_hoy, consultar_alertas, consultar_chofer, responder. ⚠️ REGLAS CR\u00cdTICAS DE N\u00daMEROS: Los precios y montos los mandas SIEMPRE como n\u00fameros enteros, NUNCA con decimales. Si el usuario dice '1800' es MIL OCHOCIENTOS, lo mandas como 1800, NO como 18. Si dice '50 mil' o '50K' lo mandas como 50000. Si dice '1.5M' o 'un millon y medio' lo mandas como 1500000. NUNCA dividas un n\u00famero por 100. Precios de combustible normales son entre 800 y 3000 por litro. Si un usuario dice un numero entre 1000 y 3000 para combustible, es ese numero exacto, NO con decimales. REGLAS DE NEGOCIO: 1) COMPRAS: por defecto siempre estado_pago pendiente. Solo marcar pagada si dice 'le pague', 'ya le pague', 'pagada', 'abonada'. 2) VENTAS: si dice 'efectivo', 'transferencia', 'me transfirio' usa forma_pago efectivo o transferencia (queda cobrada). Si dice 'a cuenta corriente', 'fiada', 'a cuenta' o NO menciona forma de pago, usa cuenta_corriente (queda pendiente). 3) GASTOS DE CAMION: si dice 'X cargo combustible', 'X cambio gomas' SIN mencionar que el chofer pago de su plata, NO asocies chofer al gasto. SOLO asocia chofer si dice 'rindio', 'pago con la plata que le di', 'rinde gastos'. 4) ENTREGAS: si le DAS plata al chofer en mano usa registrar_entrega. Categorias: adelanto_sueldo, viatico, peaje, combustible, comida, otro. 5) SUELDOS: para liquidacion mensual usa registrar_sueldo. 6) CONSULTAR CHOFER: para 'cuanto le debo a X' usa consultar_chofer. 7) ELIMINAR: si el usuario pide eliminar/borrar/anular/cancelar/sacar una operacion, usa eliminar_X seg\u00fan el tipo. Captura el dato distintivo: proveedor/cliente/chofer y monto si lo mencionan. Si solo dice 'elimina la ultima X' man\u00e1 sin datos espec\u00edficos. TIPOS VENC CAMION: vtv, seguro, habilitacion_cnrt, extintor, cisterna_adr, service. TIPOS VENC CHOFER: registro_conducir, seguro_art, cargas_peligrosas_cnrt, psicofisico, conduccion_defensiva, libreta_sanitaria. Para choferes usa siempre el apellido. Responde siempre JSON puro sin markdown con esta estructura exacta: {\"accion\":\"nombre\",\"datos\":{\"litros\":0,\"precio_litro\":0,\"producto\":\"\",\"cliente\":\"\",\"proveedor\":\"\",\"camion\":\"\",\"chofer\":\"\",\"monto\":0,\"tipo\":\"\",\"categoria\":\"\",\"forma_pago\":\"\",\"estado_pago\":\"\",\"mes\":0,\"anio\":0,\"fecha_vencimiento\":\"\",\"descripcion\":\"\"},\"mensaje\":\"\"}";
 
 function hoy() { return new Date().toISOString().split("T")[0]; }
 function pM(s) { if (!s) return null; var x=s.toString().replace(/[$]/g,"").replace(/[.]/g,"").replace(/,/g,".").trim(); if (x.toUpperCase().endsWith("M")) return parseFloat(x)*1000000; if (x.toUpperCase().endsWith("K")) return parseFloat(x)*1000; return parseFloat(x); }
@@ -72,6 +72,8 @@ async function run(accion,datos) {
       var l=pM(datos.litros);
       var pr=pM(datos.precio_litro);
       if (!l||!pr) return {ok:false,msg:"Faltan litros o precio"};
+      // Validación: precio sospechoso (combustible normalmente entre 500 y 5000)
+      if (pr < 100) return {ok:false,msg:"⚠️ Precio sospechoso: $"+pr+" por litro parece muy bajo. ¿Quisiste decir $"+(pr*100)+"? Volvé a mandar el mensaje aclarando el precio."};
       var estPago=datos.estado_pago==="pagada"?"pagada":"pendiente";
       var e=await db.from("compras").insert([{proveedor_id:p?p.id:null,fecha:hoy(),producto:mP(datos.producto),litros:l,precio_litro:pr,estado_pago:estPago}]);
       if (e.error) return {ok:false,msg:e.error.message};
@@ -85,8 +87,9 @@ async function run(accion,datos) {
       var l=pM(datos.litros);
       var pr=pM(datos.precio_litro);
       if (!l||!pr) return {ok:false,msg:"Faltan litros o precio"};
+      // Validación: precio sospechoso
+      if (pr < 100) return {ok:false,msg:"⚠️ Precio sospechoso: $"+pr+" por litro parece muy bajo. ¿Quisiste decir $"+(pr*100)+"? Volvé a mandar aclarando el precio."};
       var fp=(datos.forma_pago||"").toLowerCase();
-      // efectivo/transferencia → cobrada. cualquier otra cosa o vacío → cuenta corriente pendiente
       var cobradaAlMomento=fp==="efectivo"||fp==="transferencia";
       var condPago=cobradaAlMomento?fp:"cuenta_corriente";
       var estadoCb=cobradaAlMomento?"cobrado":"pendiente";
@@ -179,8 +182,70 @@ async function run(accion,datos) {
 
     if (accion==="consultar_alertas") { var r=await db.from("alertas_vencimientos").select("*").in("estado",["vencido","urgente"]).order("dias_restantes",{ascending:true}).limit(10); if (!r.data||!r.data.length) return {ok:true,msg:"Sin alertas. Todo OK!"}; return {ok:true,msg:"Alertas:\n"+r.data.map(function(a){return a.entidad+" "+a.documento+": "+(a.dias_restantes<0?"VENCIDO":"vence en "+a.dias_restantes+" dias");}).join("\n")}; }
 
+    // ELIMINAR OPERACIONES (compra, venta, gasto, entrega, cobro)
+    if (accion==="eliminar_compra" || accion==="eliminar_venta" || accion==="eliminar_gasto" || accion==="eliminar_entrega" || accion==="eliminar_cobro") {
+      return await eliminarOperacion(accion.replace("eliminar_",""), datos);
+    }
+
     return {ok:true,msg:null};
   } catch(e) { return {ok:false,msg:"Error: "+e.message}; }
+}
+
+// Helper para eliminar operaciones del bot
+async function eliminarOperacion(tipo, datos) {
+  var cfg = {
+    compra:  { tabla:"compras",          entKey:"proveedor", entCol:"proveedor_id", relTabla:"proveedores", relSelect:"id,nombre" },
+    venta:   { tabla:"ventas",           entKey:"cliente",   entCol:"cliente_id",   relTabla:"clientes",    relSelect:"id,nombre" },
+    gasto:   { tabla:"gastos_camiones",  entKey:"camion",    entCol:"camion_id",    relTabla:"camiones",    relSelect:"id,codigo" },
+    entrega: { tabla:"entregas_choferes",entKey:"chofer",    entCol:"chofer_id",    relTabla:"choferes",    relSelect:"id,nombre,apellido" },
+    cobro:   { tabla:"cobranzas",        entKey:"cliente",   entCol:"cliente_id",   relTabla:"clientes",    relSelect:"id,nombre" }
+  }[tipo];
+  if (!cfg) return {ok:false,msg:"Tipo no reconocido"};
+
+  // Resolver entidad si vino en el mensaje
+  var ent = null;
+  var entVal = datos[cfg.entKey];
+  if (entVal) {
+    if (cfg.entKey === "chofer") ent = await findChofer(entVal);
+    else if (cfg.entKey === "camion") ent = await find("camiones","codigo",entVal);
+    else ent = await find(cfg.relTabla, "nombre", entVal);
+    if (!ent) return {ok:false,msg:"No encontré "+cfg.entKey+" '"+entVal+"'. Pasame el nombre exacto."};
+  }
+
+  // Buscar últimas 20 operaciones, filtrando si tenemos entidad
+  var q = db.from(cfg.tabla).select("*").order("created_at",{ascending:false}).limit(20);
+  if (ent) q = q.eq(cfg.entCol, ent.id);
+  var r = await q;
+  var lista = (r.data || []);
+  if (!lista.length) return {ok:false,msg:"No encontré operaciones para eliminar"+(ent?" de "+entVal:"")};
+
+  // Filtrar por monto si se especificó
+  var montoFiltro = datos.monto ? pM(datos.monto) : null;
+  if (montoFiltro) {
+    lista = lista.filter(function(op){
+      var m = Number(op.total || op.monto || (Number(op.litros||0) * Number(op.precio_litro_venta||op.precio_litro||0)));
+      // Tolerancia 1% para errores de redondeo
+      return Math.abs(m - montoFiltro) < Math.max(1, montoFiltro * 0.01);
+    });
+    if (!lista.length) return {ok:false,msg:"No encontré "+tipo+" con monto "+fmt(montoFiltro)+(ent?" de "+entVal:"")};
+  }
+
+  // Si quedó UNA sola, la eliminamos
+  if (lista.length === 1) {
+    var op = lista[0];
+    var monto = Number(op.total || op.monto || (Number(op.litros||0) * Number(op.precio_litro_venta||op.precio_litro||0)));
+    var del = await db.from(cfg.tabla).delete().eq("id", op.id);
+    if (del.error) return {ok:false,msg:del.error.message};
+    return {ok:true,msg:"✅ Eliminada\n"+tipo.toUpperCase()+" de "+fmt(monto)+(op.fecha?"\nFecha: "+op.fecha:"")};
+  }
+
+  // Si hay varias, listarlas para que el usuario aclare
+  var msg = "Encontré "+lista.length+" "+tipo+"s. Pasame el monto exacto para borrar una específica:\n";
+  lista.slice(0,5).forEach(function(op,i){
+    var monto = Number(op.total || op.monto || (Number(op.litros||0) * Number(op.precio_litro_venta||op.precio_litro||0)));
+    msg += (i+1)+") "+fmt(monto)+" - "+(op.fecha||"")+"\n";
+  });
+  return {ok:true,msg:msg};
 }
 
 app.get("/",function(req,res){res.json({status:"ok"});});
