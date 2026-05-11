@@ -10,7 +10,7 @@ var ai = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 var twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 var historiales = {};
 
-var SYSTEM = "Sos el asistente de La Union Car SRL. Interpretas mensajes en argentino informal. CAMIONES: UC-01=Enrique Cefferino, UC-02=Juan Benitez, UC-03=Fernando Freire, UC-04=Gustavo Fernandez, UC-05=Pablo Herrera, UC-06=Juan Romero. PRODUCTOS: gasoil=gas_oil_g2, premium=gas_oil_premium, super=nafta_super, infinia=infinia_diesel. ACCIONES: registrar_compra, registrar_venta, registrar_cobro, registrar_gasto, registrar_entrega, registrar_sueldo, registrar_venc_camion, registrar_venc_chofer, consultar_stock, consultar_saldo, consultar_ventas_hoy, consultar_alertas, consultar_chofer, responder. CRITERIO IMPORTANTE: 1) Si el dinero se gasta en algo del CAMION (reparacion, neumaticos, lubricantes, repuestos, peaje, combustible para el camion) usa registrar_gasto. Si vino de la rendicion de un chofer agrega su apellido. 2) Si le DAS plata al chofer en mano (adelanto, viatico, comida, plata para gastos, dietario) usa registrar_entrega. Categorias entregas: adelanto_sueldo, viatico, peaje, combustible, comida, otro. 3) Si liquidas el SUELDO mensual de un chofer usa registrar_sueldo (necesita chofer + mes + anio). El sueldo se calcula solo, no pidas montos. 4) Para preguntas tipo cuanto le debo a Juan o cuenta de Benitez usa consultar_chofer. TIPOS VENC CAMION: vtv, seguro, habilitacion_cnrt, extintor, cisterna_adr, service. TIPOS VENC CHOFER: registro_conducir, seguro_art, cargas_peligrosas_cnrt, psicofisico, conduccion_defensiva, libreta_sanitaria. Para choferes usa siempre el apellido. Responde siempre JSON puro sin markdown con esta estructura exacta: {\"accion\":\"nombre\",\"datos\":{\"litros\":0,\"precio_litro\":0,\"producto\":\"\",\"cliente\":\"\",\"proveedor\":\"\",\"camion\":\"\",\"chofer\":\"\",\"monto\":0,\"tipo\":\"\",\"categoria\":\"\",\"mes\":0,\"anio\":0,\"fecha_vencimiento\":\"\",\"descripcion\":\"\"},\"mensaje\":\"\"}";
+var SYSTEM = "Sos el asistente de La Union Car SRL. Interpretas mensajes en argentino informal. CAMIONES: UC-01=Enrique Cefferino, UC-02=Juan Benitez, UC-03=Fernando Freire, UC-04=Gustavo Fernandez, UC-05=Pablo Herrera, UC-06=Luis Banosola. PRODUCTOS: gasoil=gas_oil_g2, premium=gas_oil_premium, super=nafta_super, infinia=infinia_diesel. ACCIONES: registrar_compra, registrar_venta, registrar_cobro, registrar_gasto, registrar_entrega, registrar_sueldo, registrar_venc_camion, registrar_venc_chofer, consultar_stock, consultar_saldo, consultar_ventas_hoy, consultar_alertas, consultar_chofer, responder. REGLAS IMPORTANTES: 1) COMPRAS: por defecto siempre pendiente_pago. Solo marcar pagada si el mensaje dice expl\u00edcitamente 'le pague', 'ya le pague', 'pagada', 'abonada'. Si dice 'me retire' o 'compre' sin mencionar pago, el estado es pendiente. 2) VENTAS: si el mensaje dice 'en efectivo', 'me pago en efectivo', 'transferencia', 'me transfiri\u00f3' usar forma_pago efectivo o transferencia (queda cobrada). Si dice 'a cuenta corriente', 'fiada', 'a cuenta' o NO menciona forma de pago, usar cuenta_corriente (queda pendiente). 3) GASTOS DE CAMION: si el mensaje dice 'X carg\u00f3 combustible', 'X cambi\u00f3 las gomas' SIN mencionar que el chofer lo pag\u00f3 con su plata, NO asocies chofer al gasto, dejalo solo asociado al camion. SOLO asocia un chofer al gasto si el mensaje dice expl\u00edcitamente 'rindi\u00f3', 'pag\u00f3 con la plata que le di', 'rinde gastos', 'le adelant\u00e9 plata y la us\u00f3 en'. Esto es CR\u00cdTICO porque si no se cobra mal el sueldo. 4) ENTREGAS: si le DAS plata al chofer en mano (adelanto, viatico, para gastos, dietario) usa registrar_entrega. Categorias: adelanto_sueldo, viatico, peaje, combustible, comida, otro. 5) SUELDOS: si liquidas el sueldo mensual usa registrar_sueldo. 6) CONSULTAR CHOFER: para preguntas como 'cuanto le debo a Juan' usa consultar_chofer. TIPOS VENC CAMION: vtv, seguro, habilitacion_cnrt, extintor, cisterna_adr, service. TIPOS VENC CHOFER: registro_conducir, seguro_art, cargas_peligrosas_cnrt, psicofisico, conduccion_defensiva, libreta_sanitaria. Para choferes usa siempre el apellido. Responde siempre JSON puro sin markdown con esta estructura exacta: {\"accion\":\"nombre\",\"datos\":{\"litros\":0,\"precio_litro\":0,\"producto\":\"\",\"cliente\":\"\",\"proveedor\":\"\",\"camion\":\"\",\"chofer\":\"\",\"monto\":0,\"tipo\":\"\",\"categoria\":\"\",\"forma_pago\":\"\",\"estado_pago\":\"\",\"mes\":0,\"anio\":0,\"fecha_vencimiento\":\"\",\"descripcion\":\"\"},\"mensaje\":\"\"}";
 
 function hoy() { return new Date().toISOString().split("T")[0]; }
 function pM(s) { if (!s) return null; var x=s.toString().replace(/[$]/g,"").replace(/[.]/g,"").replace(/,/g,".").trim(); if (x.toUpperCase().endsWith("M")) return parseFloat(x)*1000000; if (x.toUpperCase().endsWith("K")) return parseFloat(x)*1000; return parseFloat(x); }
@@ -21,16 +21,31 @@ async function find(tabla,campo,valor) { if (!valor) return null; var r=await db
 
 async function findChofer(valor) {
   if (!valor) return null;
-  var r=await db.from("choferes").select("id,nombre,apellido,sueldo_fijo,variable_por_km,variable_por_viaje").or("apellido.ilike.%"+valor+"%,nombre.ilike.%"+valor+"%").limit(5);
-  if (!r.data||!r.data.length) return null;
-  if (r.data.length===1) return r.data[0];
-  var v=valor.toLowerCase();
-  for (var i=0;i<r.data.length;i++) {
-    var full=(r.data[i].nombre+" "+r.data[i].apellido).toLowerCase();
-    var ap=r.data[i].apellido.toLowerCase();
-    if (ap===v||full===v) return r.data[i];
+  // normalizar: lowercase + sin tildes
+  var norm = function(s){ return (s||"").toString().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").trim(); };
+  var v = norm(valor);
+  if (!v) return null;
+  // buscar amplio
+  var r = await db.from("choferes").select("id,nombre,apellido,sueldo_fijo,variable_por_km,variable_por_viaje").or("apellido.ilike.%"+valor+"%,nombre.ilike.%"+valor+"%").limit(10);
+  var lista = (r.data && r.data.length) ? r.data : [];
+  // si no encontró nada, traer todos y filtrar a mano (por si hay tildes)
+  if (!lista.length) {
+    var todos = await db.from("choferes").select("id,nombre,apellido,sueldo_fijo,variable_por_km,variable_por_viaje");
+    lista = (todos.data||[]).filter(function(c){
+      var n = norm(c.nombre), a = norm(c.apellido);
+      return n.includes(v) || a.includes(v) || v.includes(n) || v.includes(a);
+    });
   }
-  return r.data[0];
+  if (!lista.length) return null;
+  if (lista.length === 1) return lista[0];
+  // si hay varios, preferir match exacto de apellido o de nombre+apellido
+  for (var i=0; i<lista.length; i++) {
+    var full = norm(lista[i].nombre+" "+lista[i].apellido);
+    var ap = norm(lista[i].apellido);
+    var nm = norm(lista[i].nombre);
+    if (ap===v || full===v || nm===v) return lista[i];
+  }
+  return lista[0];
 }
 
 // Calcula la cuenta corriente de un chofer en un mes/año dado
@@ -52,9 +67,34 @@ async function cuentaChofer(chofer_id, mes, anio) {
 
 async function run(accion,datos) {
   try {
-    if (accion==="registrar_compra") { var p=await find("proveedores","nombre",datos.proveedor); var l=pM(datos.litros); var pr=pM(datos.precio_litro); if (!l||!pr) return {ok:false,msg:"Faltan litros o precio"}; var e=await db.from("compras").insert([{proveedor_id:p?p.id:null,fecha:hoy(),producto:mP(datos.producto),litros:l,precio_litro:pr,estado_pago:"pagada"}]); if (e.error) return {ok:false,msg:e.error.message}; return {ok:true,msg:"Compra OK\n"+(p?p.nombre:datos.proveedor||"?")+"\n"+l.toLocaleString("es-AR")+"L a "+fmt(pr)+"\nTotal: "+fmt(l*pr)}; }
+    if (accion==="registrar_compra") {
+      var p=await find("proveedores","nombre",datos.proveedor);
+      var l=pM(datos.litros);
+      var pr=pM(datos.precio_litro);
+      if (!l||!pr) return {ok:false,msg:"Faltan litros o precio"};
+      var estPago=datos.estado_pago==="pagada"?"pagada":"pendiente";
+      var e=await db.from("compras").insert([{proveedor_id:p?p.id:null,fecha:hoy(),producto:mP(datos.producto),litros:l,precio_litro:pr,estado_pago:estPago}]);
+      if (e.error) return {ok:false,msg:e.error.message};
+      var totMsg=fmt(l*pr);
+      var estMsg=estPago==="pagada"?" [PAGADA]":" [PENDIENTE PAGO]";
+      return {ok:true,msg:"Compra OK"+estMsg+"\n"+(p?p.nombre:datos.proveedor||"?")+"\n"+l.toLocaleString("es-AR")+"L a "+fmt(pr)+"\nTotal: "+totMsg};
+    }
 
-    if (accion==="registrar_venta") { var c=await find("clientes","nombre",datos.cliente); var l=pM(datos.litros); var pr=pM(datos.precio_litro); if (!l||!pr) return {ok:false,msg:"Faltan litros o precio"}; var e=await db.from("ventas").insert([{cliente_id:c?c.id:null,fecha:hoy(),producto:mP(datos.producto),litros:l,precio_litro_venta:pr,condicion_pago:datos.forma_pago||"cuenta_corriente",estado_cobro:datos.forma_pago==="efectivo"?"cobrado":"pendiente"}]); if (e.error) return {ok:false,msg:e.error.message}; return {ok:true,msg:"Venta OK\n"+(c?c.nombre:datos.cliente||"?")+"\n"+l.toLocaleString("es-AR")+"L a "+fmt(pr)+"\nTotal: "+fmt(l*pr)}; }
+    if (accion==="registrar_venta") {
+      var c=await find("clientes","nombre",datos.cliente);
+      var l=pM(datos.litros);
+      var pr=pM(datos.precio_litro);
+      if (!l||!pr) return {ok:false,msg:"Faltan litros o precio"};
+      var fp=(datos.forma_pago||"").toLowerCase();
+      // efectivo/transferencia → cobrada. cualquier otra cosa o vacío → cuenta corriente pendiente
+      var cobradaAlMomento=fp==="efectivo"||fp==="transferencia";
+      var condPago=cobradaAlMomento?fp:"cuenta_corriente";
+      var estadoCb=cobradaAlMomento?"cobrado":"pendiente";
+      var e=await db.from("ventas").insert([{cliente_id:c?c.id:null,fecha:hoy(),producto:mP(datos.producto),litros:l,precio_litro_venta:pr,condicion_pago:condPago,estado_cobro:estadoCb}]);
+      if (e.error) return {ok:false,msg:e.error.message};
+      var estTxt=cobradaAlMomento?" [COBRADA en "+fp+"]":" [a cuenta corriente]";
+      return {ok:true,msg:"Venta OK"+estTxt+"\n"+(c?c.nombre:datos.cliente||"?")+"\n"+l.toLocaleString("es-AR")+"L a "+fmt(pr)+"\nTotal: "+fmt(l*pr)};
+    }
 
     if (accion==="registrar_cobro") { var c=await find("clientes","nombre",datos.cliente); var m=pM(datos.monto); if (!m) return {ok:false,msg:"Falta el monto"}; var t=datos.tipo||"efectivo"; var e=await db.from("cobranzas").insert([{cliente_id:c?c.id:null,tipo:t,monto:m,fecha_emision:hoy(),estado:t==="efectivo"||t==="transferencia"?"cobrado":"pendiente"}]); if (e.error) return {ok:false,msg:e.error.message}; if (c) { await db.from("ventas").update({estado_cobro:"cobrado"}).eq("cliente_id",c.id).eq("estado_cobro","pendiente"); } return {ok:true,msg:"Cobro OK\n"+(c?c.nombre:datos.cliente||"?")+"\n"+fmt(m)+" en "+t}; }
 
