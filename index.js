@@ -121,10 +121,23 @@ async function run(accion,datos) {
       var cobradaAlMomento=fp==="efectivo"||fp==="transferencia";
       var condPago=cobradaAlMomento?fp:"cuenta_corriente";
       var estadoCb=cobradaAlMomento?"cobrado":"pendiente";
+      var totalVenta = l * pr;
       var e=await db.from("ventas").insert([{cliente_id:c?c.id:null,fecha:hoy(),producto:mP(datos.producto),litros:l,precio_litro_venta:pr,condicion_pago:condPago,estado_cobro:estadoCb}]);
       if (e.error) return {ok:false,msg:e.error.message};
+      // Si la venta queda cobrada al momento (efectivo/transferencia), crear también el registro de cobranza
+      // para que aparezca en la vista de Cobranzas y los totales cuadren
+      if (cobradaAlMomento && c) {
+        await db.from("cobranzas").insert([{
+          cliente_id: c.id,
+          tipo: fp,
+          monto: totalVenta,
+          fecha_emision: hoy(),
+          estado: "cobrado",
+          notas: "Auto: venta " + l + "L a $" + pr
+        }]);
+      }
       var estTxt=cobradaAlMomento?" [COBRADA en "+fp+"]":" [a cuenta corriente]";
-      return {ok:true,msg:"Venta OK"+estTxt+"\n"+(c?c.nombre:datos.cliente||"?")+"\n"+l.toLocaleString("es-AR")+"L a "+fmt(pr)+"\nTotal: "+fmt(l*pr)};
+      return {ok:true,msg:"Venta OK"+estTxt+"\n"+(c?c.nombre:datos.cliente||"?")+"\n"+l.toLocaleString("es-AR")+"L a "+fmt(pr)+"\nTotal: "+fmt(totalVenta)};
     }
 
     if (accion==="registrar_cobro") { var c=await find("clientes","nombre",datos.cliente); var m=pM(datos.monto); if (!m) return {ok:false,msg:"Falta el monto"}; var t=datos.tipo||"efectivo"; var e=await db.from("cobranzas").insert([{cliente_id:c?c.id:null,tipo:t,monto:m,fecha_emision:hoy(),estado:t==="efectivo"||t==="transferencia"?"cobrado":"pendiente"}]); if (e.error) return {ok:false,msg:e.error.message}; if (c) { await db.from("ventas").update({estado_cobro:"cobrado"}).eq("cliente_id",c.id).eq("estado_cobro","pendiente"); } return {ok:true,msg:"Cobro OK\n"+(c?c.nombre:datos.cliente||"?")+"\n"+fmt(m)+" en "+t}; }
