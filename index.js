@@ -10,7 +10,7 @@ var ai = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 var twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 var historiales = {};
 
-var SYSTEM_BASE = "Sos el asistente de La Union Car SRL. Interpretas mensajes en argentino informal. PRODUCTOS: gasoil=gas_oil_g2, premium=gas_oil_premium, super=nafta_super, infinia=infinia_diesel. ACCIONES: registrar_compra, registrar_venta, registrar_cobro, registrar_gasto, registrar_entrega, registrar_sueldo, registrar_venc_camion, registrar_venc_chofer, eliminar_compra, eliminar_venta, eliminar_gasto, eliminar_entrega, eliminar_cobro, consultar_stock, consultar_saldo, consultar_ventas_hoy, consultar_alertas, consultar_chofer, responder. ⚠️ REGLAS CR\u00cdTICAS DE N\u00daMEROS: Los precios y montos los mandas SIEMPRE como n\u00fameros enteros, NUNCA con decimales. Si el usuario dice '1800' es MIL OCHOCIENTOS, lo mandas como 1800, NO como 18. Si dice '50 mil' o '50K' lo mandas como 50000. Si dice '1.5M' o 'un millon y medio' lo mandas como 1500000. NUNCA dividas un n\u00famero por 100. Precios de combustible normales son entre 800 y 3000 por litro. Si un usuario dice un numero entre 1000 y 3000 para combustible, es ese numero exacto, NO con decimales. REGLAS DE NEGOCIO: 1) COMPRAS: por defecto siempre estado_pago pendiente. Solo marcar pagada si dice 'le pague', 'ya le pague', 'pagada', 'abonada'. 2) VENTAS: si dice 'efectivo', 'transferencia', 'me transfirio' usa forma_pago efectivo o transferencia (queda cobrada). Si dice 'a cuenta corriente', 'fiada', 'a cuenta' o NO menciona forma de pago, usa cuenta_corriente (queda pendiente). 3) GASTOS DE CAMION: si dice 'X cargo combustible', 'X cambio gomas' SIN mencionar que el chofer pago de su plata, NO asocies chofer al gasto. SOLO asocia chofer si dice 'rindio', 'pago con la plata que le di', 'rinde gastos'. 4) ENTREGAS: si le DAS plata al chofer en mano usa registrar_entrega. Categorias: adelanto_sueldo, viatico, peaje, combustible, comida, otro. 5) SUELDOS: para liquidacion mensual usa registrar_sueldo. 6) CONSULTAR CHOFER: para 'cuanto le debo a X' usa consultar_chofer. 7) ELIMINAR: si el usuario pide eliminar/borrar/anular/cancelar/sacar una operacion, usa eliminar_X seg\u00fan el tipo. Captura el dato distintivo: proveedor/cliente/chofer y monto si lo mencionan. Si solo dice 'elimina la ultima X' man\u00e1 sin datos espec\u00edficos. Si dice 'borra TODAS', 'borra las dos', 'borra ambas', 'borra las 3', man\u00e1 \"cantidad\":\"todas\" en datos. TIPOS VENC CAMION: vtv, seguro, habilitacion_cnrt, extintor, cisterna_adr, service. TIPOS VENC CHOFER: registro_conducir, seguro_art, cargas_peligrosas_cnrt, psicofisico, conduccion_defensiva, libreta_sanitaria. Para choferes usa siempre el apellido. Responde siempre JSON puro sin markdown. Si el mensaje incluye UNA sola operación, devolvé UN objeto: {\"accion\":\"...\",\"datos\":{...},\"mensaje\":\"...\"}. Si el mensaje incluye VARIAS operaciones (ej: 'cargá 3 gastos al UC-05: 100mil de combustible, 50mil de gomería y 20mil de comida'), devolvé un ARRAY de objetos: [{...},{...},{...}]. La estructura interna de cada objeto es exactamente: {\"accion\":\"nombre\",\"datos\":{\"litros\":0,\"precio_litro\":0,\"producto\":\"\",\"cliente\":\"\",\"proveedor\":\"\",\"camion\":\"\",\"chofer\":\"\",\"monto\":0,\"tipo\":\"\",\"categoria\":\"\",\"forma_pago\":\"\",\"estado_pago\":\"\",\"cantidad\":\"\",\"mes\":0,\"anio\":0,\"fecha_vencimiento\":\"\",\"descripcion\":\"\"},\"mensaje\":\"\"}";
+var SYSTEM_BASE = "Sos el asistente de La Union Car SRL. Interpretas mensajes en argentino informal. PRODUCTOS: gasoil=gas_oil_g2, premium=gas_oil_premium, super=nafta_super, infinia=infinia_diesel. ACCIONES: registrar_compra, registrar_venta, registrar_cobro, registrar_gasto, registrar_entrega, registrar_sueldo, registrar_viaje, registrar_flete, registrar_venc_camion, registrar_venc_chofer, eliminar_compra, eliminar_venta, eliminar_gasto, eliminar_entrega, eliminar_cobro, consultar_stock, consultar_saldo, consultar_ventas_hoy, consultar_alertas, consultar_chofer, responder. ⚠️ REGLAS CR\u00cdTICAS DE N\u00daMEROS: Los precios y montos los mandas SIEMPRE como n\u00fameros enteros, NUNCA con decimales. Si el usuario dice '1800' es MIL OCHOCIENTOS, lo mandas como 1800, NO como 18. Si dice '50 mil' o '50K' lo mandas como 50000. Si dice '1.5M' o 'un millon y medio' lo mandas como 1500000. NUNCA dividas un n\u00famero por 100. Precios de combustible normales son entre 800 y 3000 por litro. Si un usuario dice un numero entre 1000 y 3000 para combustible, es ese numero exacto, NO con decimales. REGLAS DE NEGOCIO: 1) COMPRAS: por defecto siempre estado_pago pendiente. Solo marcar pagada si dice 'le pague', 'ya le pague', 'pagada', 'abonada'. 2) VENTAS: si dice 'efectivo', 'transferencia', 'me transfirio' usa forma_pago efectivo o transferencia (queda cobrada). Si dice 'a cuenta corriente', 'fiada', 'a cuenta' o NO menciona forma de pago, usa cuenta_corriente (queda pendiente). 3) GASTOS DE CAMION: si dice 'X cargo combustible', 'X cambio gomas' SIN mencionar que el chofer pago de su plata, NO asocies chofer al gasto. SOLO asocia chofer si dice 'rindio', 'pago con la plata que le di', 'rinde gastos'. 4) ENTREGAS: si le DAS plata al chofer en mano usa registrar_entrega. Categorias: adelanto_sueldo, viatico, peaje, combustible, comida, otro. 5) SUELDOS: para liquidacion mensual usa registrar_sueldo. 6) CONSULTAR CHOFER: para 'cuanto le debo a X' usa consultar_chofer. 7) ELIMINAR: si el usuario pide eliminar/borrar/anular/cancelar/sacar una operacion, usa eliminar_X seg\u00fan el tipo. Captura el dato distintivo: proveedor/cliente/chofer y monto si lo mencionan. Si solo dice 'elimina la ultima X' man\u00e1 sin datos espec\u00edficos. Si dice 'borra TODAS', 'borra las dos', 'borra ambas', 'borra las 3', man\u00e1 \"cantidad\":\"todas\" en datos. 8) VIAJES: cuando el usuario dice 'X hizo Y km', 'el camion Z recorri\u00f3 Y km', 'Luis hizo 300km', usa registrar_viaje. Por defecto tipo='venta_propia'. Si dice 'flete' o 'a terceros' usa tipo='flete_terceros'. Pasa km como n\u00famero entero. Si menciona chofer pero no camion, dejas camion vacio (el bot busca el camion asignado al chofer). 9) FLETES: cuando el usuario dice 'le hice un flete a [empresa] por $X' o 'flete a Huico por 500mil', usa registrar_flete. El cliente es la empresa contratante, monto es la tarifa que vas a cobrar. TIPOS VENC CAMION: vtv, seguro, habilitacion_cnrt, extintor, cisterna_adr, service. TIPOS VENC CHOFER: registro_conducir, seguro_art, cargas_peligrosas_cnrt, psicofisico, conduccion_defensiva, libreta_sanitaria. Para choferes usa siempre el apellido. Responde siempre JSON puro sin markdown. Si el mensaje incluye UNA sola operación, devolvé UN objeto: {\"accion\":\"...\",\"datos\":{...},\"mensaje\":\"...\"}. Si el mensaje incluye VARIAS operaciones, devolvé un ARRAY de objetos. La estructura interna de cada objeto es exactamente: {\"accion\":\"nombre\",\"datos\":{\"litros\":0,\"precio_litro\":0,\"producto\":\"\",\"cliente\":\"\",\"proveedor\":\"\",\"camion\":\"\",\"chofer\":\"\",\"monto\":0,\"km\":0,\"origen\":\"\",\"destino\":\"\",\"tipo\":\"\",\"categoria\":\"\",\"forma_pago\":\"\",\"estado_pago\":\"\",\"cantidad\":\"\",\"mes\":0,\"anio\":0,\"fecha_vencimiento\":\"\",\"descripcion\":\"\"},\"mensaje\":\"\"}";
 
 // Cache de mapping camiones (se refresca cada 60 segundos para no consultar la BD en cada mensaje)
 var _camionesMappingCache = null;
@@ -184,6 +184,82 @@ async function run(accion,datos) {
     if (accion==="registrar_venc_camion") { var cam=await find("camiones","codigo",datos.camion); if (!cam) return {ok:false,msg:"No encontre el camion "+datos.camion}; if (!datos.fecha_vencimiento) return {ok:false,msg:"Falta la fecha"}; var e=await db.from("documentos_camiones").insert([{camion_id:cam.id,tipo:datos.tipo||"vtv",fecha_vencimiento:datos.fecha_vencimiento,notas:datos.descripcion||null}]); if (e.error) return {ok:false,msg:e.error.message}; return {ok:true,msg:"Vencimiento OK\n"+cam.codigo+" - "+(datos.tipo||"vtv")+"\n"+datos.fecha_vencimiento}; }
 
     if (accion==="registrar_venc_chofer") { var ch=await findChofer(datos.chofer); if (!ch) return {ok:false,msg:"No encontre al chofer "+datos.chofer+". Usa el apellido exacto."}; if (!datos.fecha_vencimiento) return {ok:false,msg:"Falta la fecha"}; var e=await db.from("documentos_choferes").insert([{chofer_id:ch.id,tipo:datos.tipo||"registro_conducir",fecha_vencimiento:datos.fecha_vencimiento,notas:datos.descripcion||null}]); if (e.error) return {ok:false,msg:e.error.message}; return {ok:true,msg:"Vencimiento OK\n"+ch.nombre+" "+ch.apellido+" - "+(datos.tipo||"registro_conducir")+"\n"+datos.fecha_vencimiento}; }
+
+    if (accion==="registrar_viaje") {
+      var km = pM(datos.km || datos.monto);
+      if (!km || km <= 0) return {ok:false, msg:"Faltan los kilómetros del viaje"};
+      // Resolver camion: si dieron camion lo buscamos, si no intentamos por chofer
+      var cam = null;
+      if (datos.camion) cam = await find("camiones","codigo",datos.camion);
+      var ch = null;
+      if (datos.chofer) ch = await findChofer(datos.chofer);
+      // Si no hay camion pero hay chofer, usar el camion asignado al chofer
+      if (!cam && ch) {
+        var asign = await db.from("camiones").select("id,codigo").eq("chofer_id",ch.id).eq("activo",true).limit(1).maybeSingle();
+        if (asign.data) cam = asign.data;
+      }
+      // Si hay camion pero no hay chofer, usar el chofer asignado al camion
+      if (cam && !ch) {
+        var camFull = await db.from("camiones").select("chofer_id").eq("id",cam.id).maybeSingle();
+        if (camFull.data && camFull.data.chofer_id) {
+          var chFull = await db.from("choferes").select("id,nombre,apellido").eq("id",camFull.data.chofer_id).maybeSingle();
+          if (chFull.data) ch = chFull.data;
+        }
+      }
+      if (!cam) return {ok:false, msg:"No encontré el camión. Decime cuál (UC-01, UC-02, etc) o pasame el nombre del chofer."};
+      var tipo = (datos.tipo === "flete_terceros" || datos.tipo === "flete" || (datos.tipo||"").toLowerCase().includes("flete")) ? "flete_terceros" : "venta_propia";
+      var fecha = datos.fecha_vencimiento || hoy();
+      // Si la fecha viene en formato DD/MM/YYYY o DD/MM convertir a YYYY-MM-DD
+      if (fecha && fecha.indexOf("/") !== -1) {
+        var p = fecha.split("/");
+        if (p.length === 3) { var y = p[2].length === 2 ? "20"+p[2] : p[2]; fecha = y+"-"+p[1].padStart(2,"0")+"-"+p[0].padStart(2,"0"); }
+        else fecha = hoy();
+      }
+      var e = await db.from("viajes").insert([{
+        camion_id: cam.id,
+        chofer_id: ch ? ch.id : null,
+        fecha: fecha,
+        km: km,
+        origen: datos.origen || null,
+        destino: datos.destino || null,
+        tipo: tipo,
+        notas: datos.descripcion || null
+      }]);
+      if (e.error) return {ok:false, msg:e.error.message};
+      var chTxt = ch ? "\nChofer: " + ch.apellido + (ch.nombre ? ", "+ch.nombre : "") : "";
+      var rec = ch ? "\nSuma " + fmt(km * 120) + " al sueldo (si la tarifa es $120/km)" : "";
+      return {ok:true, msg:"✅ Viaje registrado\nCamión: " + cam.codigo + chTxt + "\nKm: " + km.toLocaleString("es-AR") + "\nTipo: " + (tipo === "venta_propia" ? "Venta propia" : "Flete terceros") + rec};
+    }
+
+    if (accion==="registrar_flete") {
+      var tarifa = pM(datos.monto || datos.tarifa);
+      if (!tarifa || tarifa <= 0) return {ok:false, msg:"Falta la tarifa del flete (cuánto cobrás)"};
+      var cl = datos.cliente ? await find("clientes","nombre",datos.cliente) : null;
+      var cam = datos.camion ? await find("camiones","codigo",datos.camion) : null;
+      var ch = datos.chofer ? await findChofer(datos.chofer) : null;
+      // Si hay camion pero no chofer, intentar asignar
+      if (cam && !ch) {
+        var camFull = await db.from("camiones").select("chofer_id").eq("id",cam.id).maybeSingle();
+        if (camFull.data && camFull.data.chofer_id) {
+          var chFull = await db.from("choferes").select("id,nombre,apellido").eq("id",camFull.data.chofer_id).maybeSingle();
+          if (chFull.data) ch = chFull.data;
+        }
+      }
+      var km = pM(datos.km) || 0;
+      var e = await db.from("fletes").insert([{
+        cliente_id: cl ? cl.id : null,
+        camion_id: cam ? cam.id : null,
+        chofer_id: ch ? ch.id : null,
+        fecha: hoy(),
+        origen: datos.origen || "",
+        destino: datos.destino || "",
+        km: km,
+        tarifa: tarifa,
+        estado_cobro: "pendiente"
+      }]);
+      if (e.error) return {ok:false, msg:e.error.message};
+      return {ok:true, msg:"✅ Flete registrado [PENDIENTE COBRO]\nCliente: " + (cl ? cl.nombre : datos.cliente || "?") + (cam ? "\nCamión: " + cam.codigo : "") + (km ? "\nKm: " + km : "") + "\nTarifa: " + fmt(tarifa)};
+    }
 
     if (accion==="consultar_saldo") { var c=await find("clientes","nombre",datos.cliente); if (!c) return {ok:false,msg:"No encontre al cliente "+datos.cliente}; var v=await db.from("ventas").select("total_venta").eq("cliente_id",c.id); var cb=await db.from("cobranzas").select("monto,estado").eq("cliente_id",c.id); var tv=(v.data||[]).reduce(function(s,x){return s+Number(x.total_venta);},0); var tc=(cb.data||[]).filter(function(x){return x.estado==="cobrado"||x.estado==="depositado";}).reduce(function(s,x){return s+Number(x.monto);},0); return {ok:true,msg:"Cuenta "+c.nombre+"\nVendido: "+fmt(tv)+"\nCobrado: "+fmt(tc)+"\nSaldo: "+fmt(Math.max(0,tv-tc))+(tv-tc>0?" DEBE":" AL DIA")}; }
 
