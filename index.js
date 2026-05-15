@@ -1,6 +1,8 @@
 var express = require("express");
 var supabase = require("@supabase/supabase-js");
-var Anthropic = require("@anthropic-ai/sdk");
+var AnthropicSDK = require("@anthropic-ai/sdk");
+// Compatibilidad con todas las versiones del SDK (algunas exportan default, otras directo)
+var Anthropic = AnthropicSDK.default || AnthropicSDK.Anthropic || AnthropicSDK;
 var twilio = require("twilio");
 var app = express();
 app.use(express.urlencoded({ extended: false }));
@@ -726,7 +728,11 @@ app.post("/webhook",async function(req,res){
     else { respuesta = parsed.mensaje || texto; }
 
     historiales[from].push({role:"assistant",content:respuesta});
-  } catch(e){console.error(e.message);}
+  } catch(e){
+    console.error("ERROR procesando mensaje:", e.message);
+    console.error("Stack:", e.stack);
+    respuesta = "❌ Error procesando tu mensaje. " + (e.message ? e.message.substring(0,80) : "Probá de nuevo.");
+  }
   // Enviar respuesta de texto
   try{await twilioClient.messages.create({from:process.env.TWILIO_WHATSAPP_NUMBER,to:from,body:respuesta});}catch(e){console.error(e.message);}
   // Si hay archivos para enviar, mandar uno por uno como mensajes separados con mediaUrl
