@@ -220,8 +220,8 @@ async function run(accion,datos) {
         chofer_id: ch ? ch.id : null,
         fecha: fecha,
         km: km,
-        origen: datos.origen || null,
-        destino: datos.destino || null,
+        origen: datos.origen || "",
+        destino: datos.destino || "",
         tipo: tipo,
         notas: datos.descripcion || null
       }]);
