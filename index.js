@@ -10,7 +10,7 @@ var ai = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 var twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 var historiales = {};
 
-var SYSTEM_BASE = "Sos el asistente de La Union Car SRL. Interpretas mensajes en argentino informal. PRODUCTOS: gasoil=gas_oil_g2, premium=gas_oil_premium, super=nafta_super, infinia=infinia_diesel. ACCIONES: registrar_compra, registrar_venta, registrar_cobro, registrar_gasto, registrar_entrega, registrar_sueldo, registrar_venc_camion, registrar_venc_chofer, eliminar_compra, eliminar_venta, eliminar_gasto, eliminar_entrega, eliminar_cobro, consultar_stock, consultar_saldo, consultar_ventas_hoy, consultar_alertas, consultar_chofer, responder. ⚠️ REGLAS CR\u00cdTICAS DE N\u00daMEROS: Los precios y montos los mandas SIEMPRE como n\u00fameros enteros, NUNCA con decimales. Si el usuario dice '1800' es MIL OCHOCIENTOS, lo mandas como 1800, NO como 18. Si dice '50 mil' o '50K' lo mandas como 50000. Si dice '1.5M' o 'un millon y medio' lo mandas como 1500000. NUNCA dividas un n\u00famero por 100. Precios de combustible normales son entre 800 y 3000 por litro. Si un usuario dice un numero entre 1000 y 3000 para combustible, es ese numero exacto, NO con decimales. REGLAS DE NEGOCIO: 1) COMPRAS: por defecto siempre estado_pago pendiente. Solo marcar pagada si dice 'le pague', 'ya le pague', 'pagada', 'abonada'. 2) VENTAS: si dice 'efectivo', 'transferencia', 'me transfirio' usa forma_pago efectivo o transferencia (queda cobrada). Si dice 'a cuenta corriente', 'fiada', 'a cuenta' o NO menciona forma de pago, usa cuenta_corriente (queda pendiente). 3) GASTOS DE CAMION: si dice 'X cargo combustible', 'X cambio gomas' SIN mencionar que el chofer pago de su plata, NO asocies chofer al gasto. SOLO asocia chofer si dice 'rindio', 'pago con la plata que le di', 'rinde gastos'. 4) ENTREGAS: si le DAS plata al chofer en mano usa registrar_entrega. Categorias: adelanto_sueldo, viatico, peaje, combustible, comida, otro. 5) SUELDOS: para liquidacion mensual usa registrar_sueldo. 6) CONSULTAR CHOFER: para 'cuanto le debo a X' usa consultar_chofer. 7) ELIMINAR: si el usuario pide eliminar/borrar/anular/cancelar/sacar una operacion, usa eliminar_X seg\u00fan el tipo. Captura el dato distintivo: proveedor/cliente/chofer y monto si lo mencionan. Si solo dice 'elimina la ultima X' man\u00e1 sin datos espec\u00edficos. Si dice 'borra TODAS', 'borra las dos', 'borra ambas', 'borra las 3', man\u00e1 \"cantidad\":\"todas\" en datos. TIPOS VENC CAMION: vtv, seguro, habilitacion_cnrt, extintor, cisterna_adr, service. TIPOS VENC CHOFER: registro_conducir, seguro_art, cargas_peligrosas_cnrt, psicofisico, conduccion_defensiva, libreta_sanitaria. Para choferes usa siempre el apellido. Responde siempre JSON puro sin markdown con esta estructura exacta: {\"accion\":\"nombre\",\"datos\":{\"litros\":0,\"precio_litro\":0,\"producto\":\"\",\"cliente\":\"\",\"proveedor\":\"\",\"camion\":\"\",\"chofer\":\"\",\"monto\":0,\"tipo\":\"\",\"categoria\":\"\",\"forma_pago\":\"\",\"estado_pago\":\"\",\"cantidad\":\"\",\"mes\":0,\"anio\":0,\"fecha_vencimiento\":\"\",\"descripcion\":\"\"},\"mensaje\":\"\"}";
+var SYSTEM_BASE = "Sos el asistente de La Union Car SRL. Interpretas mensajes en argentino informal. PRODUCTOS: gasoil=gas_oil_g2, premium=gas_oil_premium, super=nafta_super, infinia=infinia_diesel. ACCIONES: registrar_compra, registrar_venta, registrar_cobro, registrar_gasto, registrar_entrega, registrar_sueldo, registrar_venc_camion, registrar_venc_chofer, eliminar_compra, eliminar_venta, eliminar_gasto, eliminar_entrega, eliminar_cobro, consultar_stock, consultar_saldo, consultar_ventas_hoy, consultar_alertas, consultar_chofer, responder. ⚠️ REGLAS CR\u00cdTICAS DE N\u00daMEROS: Los precios y montos los mandas SIEMPRE como n\u00fameros enteros, NUNCA con decimales. Si el usuario dice '1800' es MIL OCHOCIENTOS, lo mandas como 1800, NO como 18. Si dice '50 mil' o '50K' lo mandas como 50000. Si dice '1.5M' o 'un millon y medio' lo mandas como 1500000. NUNCA dividas un n\u00famero por 100. Precios de combustible normales son entre 800 y 3000 por litro. Si un usuario dice un numero entre 1000 y 3000 para combustible, es ese numero exacto, NO con decimales. REGLAS DE NEGOCIO: 1) COMPRAS: por defecto siempre estado_pago pendiente. Solo marcar pagada si dice 'le pague', 'ya le pague', 'pagada', 'abonada'. 2) VENTAS: si dice 'efectivo', 'transferencia', 'me transfirio' usa forma_pago efectivo o transferencia (queda cobrada). Si dice 'a cuenta corriente', 'fiada', 'a cuenta' o NO menciona forma de pago, usa cuenta_corriente (queda pendiente). 3) GASTOS DE CAMION: si dice 'X cargo combustible', 'X cambio gomas' SIN mencionar que el chofer pago de su plata, NO asocies chofer al gasto. SOLO asocia chofer si dice 'rindio', 'pago con la plata que le di', 'rinde gastos'. 4) ENTREGAS: si le DAS plata al chofer en mano usa registrar_entrega. Categorias: adelanto_sueldo, viatico, peaje, combustible, comida, otro. 5) SUELDOS: para liquidacion mensual usa registrar_sueldo. 6) CONSULTAR CHOFER: para 'cuanto le debo a X' usa consultar_chofer. 7) ELIMINAR: si el usuario pide eliminar/borrar/anular/cancelar/sacar una operacion, usa eliminar_X seg\u00fan el tipo. Captura el dato distintivo: proveedor/cliente/chofer y monto si lo mencionan. Si solo dice 'elimina la ultima X' man\u00e1 sin datos espec\u00edficos. Si dice 'borra TODAS', 'borra las dos', 'borra ambas', 'borra las 3', man\u00e1 \"cantidad\":\"todas\" en datos. TIPOS VENC CAMION: vtv, seguro, habilitacion_cnrt, extintor, cisterna_adr, service. TIPOS VENC CHOFER: registro_conducir, seguro_art, cargas_peligrosas_cnrt, psicofisico, conduccion_defensiva, libreta_sanitaria. Para choferes usa siempre el apellido. Responde siempre JSON puro sin markdown. Si el mensaje incluye UNA sola operación, devolvé UN objeto: {\"accion\":\"...\",\"datos\":{...},\"mensaje\":\"...\"}. Si el mensaje incluye VARIAS operaciones (ej: 'cargá 3 gastos al UC-05: 100mil de combustible, 50mil de gomería y 20mil de comida'), devolvé un ARRAY de objetos: [{...},{...},{...}]. La estructura interna de cada objeto es exactamente: {\"accion\":\"nombre\",\"datos\":{\"litros\":0,\"precio_litro\":0,\"producto\":\"\",\"cliente\":\"\",\"proveedor\":\"\",\"camion\":\"\",\"chofer\":\"\",\"monto\":0,\"tipo\":\"\",\"categoria\":\"\",\"forma_pago\":\"\",\"estado_pago\":\"\",\"cantidad\":\"\",\"mes\":0,\"anio\":0,\"fecha_vencimiento\":\"\",\"descripcion\":\"\"},\"mensaje\":\"\"}";
 
 // Cache de mapping camiones (se refresca cada 60 segundos para no consultar la BD en cada mensaje)
 var _camionesMappingCache = null;
@@ -291,6 +291,35 @@ async function eliminarOperacion(tipo, datos) {
 
 app.get("/",function(req,res){res.json({status:"ok"});});
 
+// Parser robusto: limpia markdown, escapes inválidos, y usa balanceo de llaves
+function extraerJSON(texto) {
+  if (!texto) return null;
+  var t = texto.replace(/^```json/gim,"").replace(/^json\s*$/gim,"").replace(/```/g,"").trim();
+  // Limpiar escape sequences inválidas (común: \$ que rompe JSON)
+  t = t.replace(/\\([^"\\\/bfnrtu])/g, "$1");
+  try { return JSON.parse(t); } catch(e) {}
+  // Buscar primer { o [ y balancear llaves
+  var inicio = -1, tipoApertura = null;
+  for (var i=0; i<t.length; i++) {
+    if (t[i]==="{") { inicio=i; tipoApertura="{"; break; }
+    if (t[i]==="[") { inicio=i; tipoApertura="["; break; }
+  }
+  if (inicio===-1) return null;
+  var cierre = tipoApertura==="{" ? "}" : "]";
+  var depth=0, fin=-1, enString=false, escape=false;
+  for (var i=inicio; i<t.length; i++) {
+    var c=t[i];
+    if (escape) { escape=false; continue; }
+    if (c==="\\") { escape=true; continue; }
+    if (c==='"') { enString=!enString; continue; }
+    if (enString) continue;
+    if (c===tipoApertura) depth++;
+    else if (c===cierre) { depth--; if (depth===0) { fin=i; break; } }
+  }
+  if (fin===-1) return null;
+  try { return JSON.parse(t.substring(inicio, fin+1)); } catch(e) { return null; }
+}
+
 app.post("/webhook",async function(req,res){
   var from=req.body.From; var body=req.body.Body?req.body.Body.trim():"";
   if (!body) return res.status(200).send("<Response></Response>");
@@ -301,12 +330,39 @@ app.post("/webhook",async function(req,res){
   var respuesta="Error. Intenta de nuevo.";
   try {
     var sysPrompt = await getSystem();
-    var resp=await ai.messages.create({model:"claude-haiku-4-5-20251001",max_tokens:800,system:sysPrompt,messages:historiales[from]});
+    var resp=await ai.messages.create({model:"claude-haiku-4-5-20251001",max_tokens:1500,system:sysPrompt,messages:historiales[from]});
     var texto=resp.content[0]?resp.content[0].text:"";
     console.log("AI: "+texto);
-    var parsed; try{parsed=JSON.parse(texto.replace(/```json/g,"").replace(/```/g,"").trim());}catch(e){parsed={accion:"responder",datos:{},mensaje:texto};}
-    if (parsed.accion&&parsed.accion!=="responder"){var r=await run(parsed.accion,parsed.datos||{});respuesta=r.ok?(r.msg||parsed.mensaje||"Listo!"):(r.msg||"Error.");}
-    else{respuesta=parsed.mensaje||texto;}
+
+    var parsed = extraerJSON(texto);
+    if (!parsed) {
+      parsed = {accion:"responder",datos:{},mensaje:texto};
+    }
+
+    // Si el modelo devolvió un ARRAY, ejecutar cada operación y armar resumen
+    if (Array.isArray(parsed)) {
+      var msgs = [];
+      var okCount = 0, errCount = 0;
+      for (var i=0; i<parsed.length; i++) {
+        var op = parsed[i];
+        if (op && op.accion && op.accion !== "responder") {
+          var r = await run(op.accion, op.datos || {});
+          if (r.ok) { okCount++; msgs.push((i+1)+") "+(r.msg || op.mensaje || "Listo")); }
+          else { errCount++; msgs.push((i+1)+") ❌ "+(r.msg || "Error")); }
+        } else if (op && op.mensaje) {
+          msgs.push((i+1)+") "+op.mensaje);
+        }
+      }
+      var header = "Procesé "+parsed.length+" operaciones ("+okCount+" OK"+(errCount?", "+errCount+" con error":"")+"):\n\n";
+      respuesta = header + msgs.join("\n\n");
+    }
+    // Si fue un solo objeto, comportamiento original
+    else if (parsed.accion && parsed.accion !== "responder") {
+      var r = await run(parsed.accion, parsed.datos || {});
+      respuesta = r.ok ? (r.msg || parsed.mensaje || "Listo!") : (r.msg || "Error.");
+    }
+    else { respuesta = parsed.mensaje || texto; }
+
     historiales[from].push({role:"assistant",content:respuesta});
   } catch(e){console.error(e.message);}
   try{await twilioClient.messages.create({from:process.env.TWILIO_WHATSAPP_NUMBER,to:from,body:respuesta});}catch(e){console.error(e.message);}
