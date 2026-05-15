@@ -10,7 +10,7 @@ var ai = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 var twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 var historiales = {};
 
-var SYSTEM_BASE = "Sos el asistente de La Union Car SRL. Interpretas mensajes en argentino informal. PRODUCTOS: gasoil=gas_oil_g2, premium=gas_oil_premium, super=nafta_super, infinia=infinia_diesel. ACCIONES: registrar_compra, registrar_venta, registrar_cobro, registrar_gasto, registrar_entrega, registrar_sueldo, registrar_viaje, registrar_flete, registrar_venc_camion, registrar_venc_chofer, eliminar_compra, eliminar_venta, eliminar_gasto, eliminar_entrega, eliminar_cobro, consultar_stock, consultar_saldo, consultar_ventas_hoy, consultar_alertas, consultar_chofer, responder. ⚠️ REGLAS CR\u00cdTICAS DE N\u00daMEROS: Los precios y montos los mandas SIEMPRE como n\u00fameros enteros, NUNCA con decimales. Si el usuario dice '1800' es MIL OCHOCIENTOS, lo mandas como 1800, NO como 18. Si dice '50 mil' o '50K' lo mandas como 50000. Si dice '1.5M' o 'un millon y medio' lo mandas como 1500000. NUNCA dividas un n\u00famero por 100. Precios de combustible normales son entre 800 y 3000 por litro. Si un usuario dice un numero entre 1000 y 3000 para combustible, es ese numero exacto, NO con decimales. REGLAS DE NEGOCIO: 1) COMPRAS: por defecto siempre estado_pago pendiente. Solo marcar pagada si dice 'le pague', 'ya le pague', 'pagada', 'abonada'. 2) VENTAS: La forma_pago DEFAULT es SIEMPRE cuenta_corriente (pendiente). Si el usuario NO menciona expl\u00edcitamente 'efectivo', 'transferencia', 'me transfirio', 'me pago', 'le cobre', DEBES usar cuenta_corriente. EJEMPLOS CR\u00cdTICOS: 'vend\u00ed 100L a Sampacho a 2100' = cuenta_corriente. '20mil de gas oil a 2100 sampacho' = cuenta_corriente. 'le llev\u00e9 5000L a Cristian' = cuenta_corriente. 'vend\u00ed 100L a Sampacho en transferencia' = transferencia (cobrada). NUNCA marques una venta como cobrada por defecto. Esto es CR\u00cdTICO porque si la marcas mal, Fede pierde la deuda del cliente en su sistema. 3) GASTOS DE CAMION: si dice 'X cargo combustible', 'X cambio gomas' SIN mencionar que el chofer pago de su plata, NO asocies chofer al gasto. SOLO asocia chofer si dice 'rindio', 'pago con la plata que le di', 'rinde gastos'. 4) ENTREGAS: si le DAS plata al chofer en mano usa registrar_entrega. Categorias: adelanto_sueldo, viatico, peaje, combustible, comida, otro. 5) SUELDOS: para liquidacion mensual usa registrar_sueldo. 6) CONSULTAR CHOFER: para 'cuanto le debo a X' usa consultar_chofer. 7) ELIMINAR: si el usuario pide eliminar/borrar/anular/cancelar/sacar una operacion, usa eliminar_X seg\u00fan el tipo. Captura el dato distintivo: proveedor/cliente/chofer y monto si lo mencionan. Si solo dice 'elimina la ultima X' man\u00e1 sin datos espec\u00edficos. Si dice 'borra TODAS', 'borra las dos', 'borra ambas', 'borra las 3', man\u00e1 \"cantidad\":\"todas\" en datos. 8) VIAJES: cuando el usuario dice 'X hizo Y km', 'el camion Z recorri\u00f3 Y km', 'Luis hizo 300km', usa registrar_viaje. Por defecto tipo='venta_propia'. Si dice 'flete' o 'a terceros' usa tipo='flete_terceros'. Pasa km como n\u00famero entero. Si menciona chofer pero no camion, dejas camion vacio (el bot busca el camion asignado al chofer). 9) FLETES: cuando el usuario dice 'le hice un flete a [empresa] por $X' o 'flete a Huico por 500mil', usa registrar_flete. El cliente es la empresa contratante, monto es la tarifa que vas a cobrar. TIPOS VENC CAMION: vtv, seguro, habilitacion_cnrt, extintor, cisterna_adr, service. TIPOS VENC CHOFER: registro_conducir, seguro_art, cargas_peligrosas_cnrt, psicofisico, conduccion_defensiva, libreta_sanitaria. Para choferes usa siempre el apellido. Responde siempre JSON puro sin markdown. Si el mensaje incluye UNA sola operación, devolvé UN objeto: {\"accion\":\"...\",\"datos\":{...},\"mensaje\":\"...\"}. Si el mensaje incluye VARIAS operaciones, devolvé un ARRAY de objetos. La estructura interna de cada objeto es exactamente: {\"accion\":\"nombre\",\"datos\":{\"litros\":0,\"precio_litro\":0,\"producto\":\"\",\"cliente\":\"\",\"proveedor\":\"\",\"camion\":\"\",\"chofer\":\"\",\"monto\":0,\"km\":0,\"origen\":\"\",\"destino\":\"\",\"tipo\":\"\",\"categoria\":\"\",\"forma_pago\":\"\",\"estado_pago\":\"\",\"cantidad\":\"\",\"mes\":0,\"anio\":0,\"fecha_vencimiento\":\"\",\"descripcion\":\"\"},\"mensaje\":\"\"}";
+var SYSTEM_BASE = "Sos el asistente de La Union Car SRL. Interpretas mensajes en argentino informal. PRODUCTOS: gasoil=gas_oil_g2, premium=gas_oil_premium, super=nafta_super, infinia=infinia_diesel. ACCIONES: registrar_compra, registrar_venta, registrar_cobro, registrar_gasto, registrar_entrega, registrar_sueldo, registrar_viaje, registrar_flete, registrar_venc_camion, registrar_venc_chofer, eliminar_compra, eliminar_venta, eliminar_gasto, eliminar_entrega, eliminar_cobro, eliminar_viaje, eliminar_flete, marcar_flete_cobrado, consultar_stock, consultar_saldo, consultar_ventas_hoy, consultar_alertas, consultar_chofer, consultar_balance, consultar_vencimientos, responder. ⚠️ REGLAS CR\u00cdTICAS DE N\u00daMEROS: Los precios y montos los mandas SIEMPRE como n\u00fameros enteros, NUNCA con decimales. Si el usuario dice '1800' es MIL OCHOCIENTOS, lo mandas como 1800, NO como 18. Si dice '50 mil' o '50K' lo mandas como 50000. Si dice '1.5M' o 'un millon y medio' lo mandas como 1500000. NUNCA dividas un n\u00famero por 100. Precios de combustible normales son entre 800 y 3000 por litro. Si un usuario dice un numero entre 1000 y 3000 para combustible, es ese numero exacto, NO con decimales. REGLAS DE NEGOCIO: 1) COMPRAS: por defecto siempre estado_pago pendiente. Solo marcar pagada si dice 'le pague', 'ya le pague', 'pagada', 'abonada'. 2) VENTAS: La forma_pago DEFAULT es SIEMPRE cuenta_corriente (pendiente). Si el usuario NO menciona expl\u00edcitamente 'efectivo', 'transferencia', 'me transfirio', 'me pago', 'le cobre', DEBES usar cuenta_corriente. EJEMPLOS CR\u00cdTICOS: 'vend\u00ed 100L a Sampacho a 2100' = cuenta_corriente. '20mil de gas oil a 2100 sampacho' = cuenta_corriente. 'le llev\u00e9 5000L a Cristian' = cuenta_corriente. 'vend\u00ed 100L a Sampacho en transferencia' = transferencia (cobrada). NUNCA marques una venta como cobrada por defecto. Esto es CR\u00cdTICO porque si la marcas mal, Fede pierde la deuda del cliente en su sistema. 3) GASTOS DE CAMION: si dice 'X cargo combustible', 'X cambio gomas' SIN mencionar que el chofer pago de su plata, NO asocies chofer al gasto. SOLO asocia chofer si dice 'rindio', 'pago con la plata que le di', 'rinde gastos'. 4) ENTREGAS: si le DAS plata al chofer en mano usa registrar_entrega. Categorias: adelanto_sueldo, viatico, peaje, combustible, comida, otro. 5) SUELDOS: para liquidacion mensual usa registrar_sueldo. 6) CONSULTAR CHOFER: para 'cuanto le debo a X' usa consultar_chofer. 7) ELIMINAR: si el usuario pide eliminar/borrar/anular/cancelar/sacar una operacion, usa eliminar_X seg\u00fan el tipo. Captura el dato distintivo: proveedor/cliente/chofer y monto si lo mencionan. Si solo dice 'elimina la ultima X' man\u00e1 sin datos espec\u00edficos. Si dice 'borra TODAS', 'borra las dos', 'borra ambas', 'borra las 3', man\u00e1 \"cantidad\":\"todas\" en datos. 8) VIAJES: cuando el usuario dice 'X hizo Y km', 'el camion Z recorri\u00f3 Y km', 'Luis hizo 300km', usa registrar_viaje. Por defecto tipo='venta_propia'. Si dice 'flete' o 'a terceros' usa tipo='flete_terceros'. Pasa km como n\u00famero entero. Si menciona chofer pero no camion, dejas camion vacio (el bot busca el camion asignado al chofer). 9) FLETES: cuando el usuario dice 'le hice un flete a [empresa] por $X' o 'flete a Huico por 500mil', usa registrar_flete. El cliente es la empresa contratante, monto es la tarifa que vas a cobrar. 10) MARCAR FLETE COBRADO: cuando dice 'cobré el flete a X' o 'me pagaron el flete', usa marcar_flete_cobrado. 11) CONSULTAR BALANCE: cuando dice 'como viene el mes', 'cuanto gane', 'balance', 'cuanto factuté', usa consultar_balance. 12) CONSULTAR VENCIMIENTOS: cuando dice 'que vence', 'que tengo que pagar pronto', 'que se viene', 'cheques por cobrar', usa consultar_vencimientos. La cantidad de días por defecto es 30. Si dice 'esta semana' usa cantidad=7, si dice 'este mes' usa cantidad=30. 13) ELIMINAR VIAJE/FLETE: igual que las otras eliminaciones, usa eliminar_viaje o eliminar_flete según el contexto. TIPOS VENC CAMION: vtv, seguro, habilitacion_cnrt, extintor, cisterna_adr, service. TIPOS VENC CHOFER: registro_conducir, seguro_art, cargas_peligrosas_cnrt, psicofisico, conduccion_defensiva, libreta_sanitaria. Para choferes usa siempre el apellido. Responde siempre JSON puro sin markdown. Si el mensaje incluye UNA sola operación, devolvé UN objeto: {\"accion\":\"...\",\"datos\":{...},\"mensaje\":\"...\"}. Si el mensaje incluye VARIAS operaciones, devolvé un ARRAY de objetos. La estructura interna de cada objeto es exactamente: {\"accion\":\"nombre\",\"datos\":{\"litros\":0,\"precio_litro\":0,\"producto\":\"\",\"cliente\":\"\",\"proveedor\":\"\",\"camion\":\"\",\"chofer\":\"\",\"monto\":0,\"km\":0,\"origen\":\"\",\"destino\":\"\",\"tipo\":\"\",\"categoria\":\"\",\"forma_pago\":\"\",\"estado_pago\":\"\",\"cantidad\":\"\",\"mes\":0,\"anio\":0,\"fecha_vencimiento\":\"\",\"descripcion\":\"\"},\"mensaje\":\"\"}";
 
 // Cache de mapping camiones (se refresca cada 60 segundos para no consultar la BD en cada mensaje)
 var _camionesMappingCache = null;
@@ -299,6 +299,145 @@ async function run(accion,datos) {
 
     if (accion==="consultar_alertas") { var r=await db.from("alertas_vencimientos").select("*").in("estado",["vencido","urgente"]).order("dias_restantes",{ascending:true}).limit(10); if (!r.data||!r.data.length) return {ok:true,msg:"Sin alertas. Todo OK!"}; return {ok:true,msg:"Alertas:\n"+r.data.map(function(a){return a.entidad+" "+a.documento+": "+(a.dias_restantes<0?"VENCIDO":"vence en "+a.dias_restantes+" dias");}).join("\n")}; }
 
+    // ── CONSULTAR BALANCE DEL MES ──
+    if (accion==="consultar_balance") {
+      var d=new Date();
+      var mes=parseInt(datos.mes)||(d.getMonth()+1);
+      var anio=parseInt(datos.anio)||d.getFullYear();
+      var primero=anio+"-"+String(mes).padStart(2,"0")+"-01";
+      var ultimoDia=new Date(anio,mes,0).getDate();
+      var ultimo=anio+"-"+String(mes).padStart(2,"0")+"-"+String(ultimoDia).padStart(2,"0");
+      var [vRes,cRes,gRes,fRes,sRes] = await Promise.all([
+        db.from("ventas").select("total_venta").gte("fecha",primero).lte("fecha",ultimo),
+        db.from("compras").select("total").gte("fecha",primero).lte("fecha",ultimo),
+        db.from("gastos_camiones").select("monto").gte("fecha",primero).lte("fecha",ultimo),
+        db.from("fletes").select("tarifa").gte("fecha",primero).lte("fecha",ultimo),
+        db.from("sueldos_choferes").select("total_bruto").eq("mes",mes).eq("anio",anio)
+      ]);
+      var tv=(vRes.data||[]).reduce(function(s,x){return s+Number(x.total_venta||0);},0);
+      var tf=(fRes.data||[]).reduce(function(s,x){return s+Number(x.tarifa||0);},0);
+      var tc=(cRes.data||[]).reduce(function(s,x){return s+Number(x.total||0);},0);
+      var tg=(gRes.data||[]).reduce(function(s,x){return s+Number(x.monto||0);},0);
+      var ts=(sRes.data||[]).reduce(function(s,x){return s+Number(x.total_bruto||0);},0);
+      var ingresos=tv+tf;
+      var egresos=tc+tg+ts;
+      var resultado=ingresos-egresos;
+      var nombreMes=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"][mes-1];
+      return {ok:true,msg:"📊 BALANCE "+nombreMes+" "+anio+"\n\nINGRESOS\nVentas: "+fmt(tv)+"\nFletes: "+fmt(tf)+"\nTotal: "+fmt(ingresos)+"\n\nEGRESOS\nCompras: "+fmt(tc)+"\nGastos: "+fmt(tg)+"\nSueldos: "+fmt(ts)+"\nTotal: "+fmt(egresos)+"\n\n"+(resultado>=0?"✅ GANANCIA: ":"❌ PÉRDIDA: ")+fmt(Math.abs(resultado))};
+    }
+
+    // ── CONSULTAR VENCIMIENTOS PRÓXIMOS ──
+    if (accion==="consultar_vencimientos") {
+      var hoyFecha=new Date();
+      var dias=parseInt(datos.cantidad)||30;
+      var futuro=new Date(hoyFecha.getTime()+dias*86400000).toISOString().split("T")[0];
+      var hoyStr=hoyFecha.toISOString().split("T")[0];
+      var [docCam,docCh,cheques] = await Promise.all([
+        db.from("documentos_camiones").select("*,camiones(codigo)").lte("fecha_vencimiento",futuro).order("fecha_vencimiento"),
+        db.from("documentos_choferes").select("*,choferes(nombre,apellido)").lte("fecha_vencimiento",futuro).order("fecha_vencimiento"),
+        db.from("cobranzas").select("*,clientes(nombre)").eq("tipo","cheque").eq("estado","pendiente").lte("fecha_vencimiento",futuro).order("fecha_vencimiento")
+      ]);
+      var lineas=[];
+      (docCam.data||[]).forEach(function(d){
+        var dd=Math.floor((new Date(d.fecha_vencimiento)-hoyFecha)/86400000);
+        if (dd<dias+1) lineas.push("🚛 "+(d.camiones?d.camiones.codigo:"?")+" "+d.tipo.replace(/_/g," ")+": "+(dd<0?"VENCIDO hace "+Math.abs(dd)+" días":dd===0?"VENCE HOY":"en "+dd+" días"));
+      });
+      (docCh.data||[]).forEach(function(d){
+        var dd=Math.floor((new Date(d.fecha_vencimiento)-hoyFecha)/86400000);
+        if (dd<dias+1) lineas.push("👤 "+(d.choferes?d.choferes.apellido:"?")+" "+d.tipo.replace(/_/g," ")+": "+(dd<0?"VENCIDO hace "+Math.abs(dd)+" días":dd===0?"VENCE HOY":"en "+dd+" días"));
+      });
+      (cheques.data||[]).forEach(function(c){
+        var dd=Math.floor((new Date(c.fecha_vencimiento)-hoyFecha)/86400000);
+        if (dd<dias+1) lineas.push("💸 Cheque #"+(c.nro_cheque||"?")+" "+(c.clientes?c.clientes.nombre:"")+" "+fmt(c.monto)+": "+(dd<0?"VENCIDO hace "+Math.abs(dd)+" días":dd===0?"COBRAR HOY":"en "+dd+" días"));
+      });
+      if (!lineas.length) return {ok:true,msg:"✅ Sin vencimientos en los próximos "+dias+" días"};
+      return {ok:true,msg:"📅 Vencimientos próximos ("+dias+" días):\n\n"+lineas.join("\n")};
+    }
+
+    // ── ELIMINAR VIAJE ──
+    if (accion==="eliminar_viaje") {
+      var q=db.from("viajes").select("*,camiones(codigo),choferes(apellido,nombre)").order("created_at",{ascending:false}).limit(20);
+      if (datos.chofer) {
+        var ch=await findChofer(datos.chofer);
+        if (ch) q=q.eq("chofer_id",ch.id);
+      }
+      if (datos.camion) {
+        var cam=await find("camiones","codigo",datos.camion);
+        if (cam) q=q.eq("camion_id",cam.id);
+      }
+      var r=await q;
+      var lista=r.data||[];
+      // Filtrar por km si vino
+      var kmFiltro=pM(datos.km);
+      if (kmFiltro) lista=lista.filter(function(v){return Math.abs(Number(v.km)-kmFiltro)<10;});
+      if (!lista.length) return {ok:false,msg:"No encontré viajes para eliminar"};
+      var queTodas=String(datos.cantidad||"").toLowerCase();
+      if (lista.length>1 && queTodas!=="todas") {
+        var msg="Encontré "+lista.length+" viajes. Decime los km del viaje a borrar o decí 'borra todos':\n";
+        lista.slice(0,5).forEach(function(v,i){msg+=(i+1)+") "+(v.camiones?v.camiones.codigo:"?")+" "+(v.choferes?v.choferes.apellido:"?")+" - "+v.km+"km - "+v.fecha+"\n";});
+        return {ok:true,msg:msg};
+      }
+      if (queTodas==="todas") {
+        var ids=lista.map(function(v){return v.id;});
+        var del=await db.from("viajes").delete().in("id",ids);
+        if (del.error) return {ok:false,msg:del.error.message};
+        return {ok:true,msg:"✅ Eliminados "+lista.length+" viajes"};
+      }
+      var v=lista[0];
+      var del=await db.from("viajes").delete().eq("id",v.id);
+      if (del.error) return {ok:false,msg:del.error.message};
+      return {ok:true,msg:"✅ Viaje eliminado\n"+(v.camiones?v.camiones.codigo:"?")+" "+(v.choferes?v.choferes.apellido:"")+"\n"+v.km+" km - "+v.fecha};
+    }
+
+    // ── ELIMINAR FLETE ──
+    if (accion==="eliminar_flete") {
+      var q=db.from("fletes").select("*,clientes(nombre),camiones(codigo)").order("created_at",{ascending:false}).limit(20);
+      if (datos.cliente) {
+        var cl=await find("clientes","nombre",datos.cliente);
+        if (cl) q=q.eq("cliente_id",cl.id);
+      }
+      var r=await q;
+      var lista=r.data||[];
+      if (!lista.length) return {ok:false,msg:"No encontré fletes para eliminar"};
+      if (lista.length>1 && String(datos.cantidad||"").toLowerCase()!=="todas") {
+        var msg="Encontré "+lista.length+" fletes. Decime el monto/tarifa para borrar uno o 'borra todos':\n";
+        lista.slice(0,5).forEach(function(f,i){msg+=(i+1)+") "+(f.clientes?f.clientes.nombre:"?")+" "+fmt(f.tarifa)+" - "+f.fecha+"\n";});
+        return {ok:true,msg:msg};
+      }
+      var f=lista[0];
+      var del=await db.from("fletes").delete().eq("id",f.id);
+      if (del.error) return {ok:false,msg:del.error.message};
+      return {ok:true,msg:"✅ Flete eliminado\n"+(f.clientes?f.clientes.nombre:"?")+"\n"+fmt(f.tarifa)};
+    }
+
+    // ── MARCAR FLETE COBRADO ──
+    if (accion==="marcar_flete_cobrado") {
+      var q=db.from("fletes").select("*,clientes(nombre)").eq("estado_cobro","pendiente").order("created_at",{ascending:false}).limit(20);
+      if (datos.cliente) {
+        var cl=await find("clientes","nombre",datos.cliente);
+        if (cl) q=q.eq("cliente_id",cl.id);
+      }
+      var r=await q;
+      var lista=r.data||[];
+      if (!lista.length) return {ok:false,msg:"No encontré fletes pendientes de cobrar"};
+      if (lista.length>1 && String(datos.cantidad||"").toLowerCase()!=="todos") {
+        var msg="Encontré "+lista.length+" fletes pendientes. Decime cliente o tarifa, o 'cobrá todos':\n";
+        lista.slice(0,5).forEach(function(f,i){msg+=(i+1)+") "+(f.clientes?f.clientes.nombre:"?")+" "+fmt(f.tarifa)+" - "+f.fecha+"\n";});
+        return {ok:true,msg:msg};
+      }
+      if (String(datos.cantidad||"").toLowerCase()==="todos") {
+        var ids=lista.map(function(f){return f.id;});
+        var upd=await db.from("fletes").update({estado_cobro:"cobrado"}).in("id",ids);
+        if (upd.error) return {ok:false,msg:upd.error.message};
+        var totalCobrado=lista.reduce(function(s,f){return s+Number(f.tarifa||0);},0);
+        return {ok:true,msg:"✅ "+lista.length+" fletes marcados cobrados\nTotal: "+fmt(totalCobrado)};
+      }
+      var f=lista[0];
+      var upd=await db.from("fletes").update({estado_cobro:"cobrado"}).eq("id",f.id);
+      if (upd.error) return {ok:false,msg:upd.error.message};
+      return {ok:true,msg:"✅ Flete cobrado\n"+(f.clientes?f.clientes.nombre:"?")+"\n"+fmt(f.tarifa)};
+    }
+
     // ELIMINAR OPERACIONES (compra, venta, gasto, entrega, cobro)
     if (accion==="eliminar_compra" || accion==="eliminar_venta" || accion==="eliminar_gasto" || accion==="eliminar_entrega" || accion==="eliminar_cobro") {
       return await eliminarOperacion(accion.replace("eliminar_",""), datos);
@@ -379,6 +518,98 @@ async function eliminarOperacion(tipo, datos) {
 }
 
 app.get("/",function(req,res){res.json({status:"ok"});});
+
+// ── CRON DIARIO: AVISA VENCIMIENTOS Y COBROS POR WHATSAPP ──
+// Configurar un cron externo (cron-job.org) que pegue a este endpoint cada día a las 8:00 AM
+// La autenticación es por query param ?key=XXX para que no cualquiera pueda dispararlo
+app.get("/cron-daily", async function(req, res) {
+  var keyEsperada = process.env.CRON_KEY || "default-key-12345";
+  if (req.query.key !== keyEsperada) {
+    return res.status(401).json({error:"unauthorized"});
+  }
+  var destino = process.env.FEDE_WHATSAPP || process.env.TWILIO_WHATSAPP_TO;
+  if (!destino) {
+    return res.status(500).json({error:"FEDE_WHATSAPP no configurado"});
+  }
+  try {
+    var hoyFecha = new Date();
+    var hoyStr = hoyFecha.toISOString().split("T")[0];
+    var en7 = new Date(hoyFecha.getTime()+7*86400000).toISOString().split("T")[0];
+    var en15 = new Date(hoyFecha.getTime()+15*86400000).toISOString().split("T")[0];
+
+    var [vencCam, vencCh, cheques, ventasPendientes] = await Promise.all([
+      db.from("documentos_camiones").select("*,camiones(codigo)").lte("fecha_vencimiento", en15).order("fecha_vencimiento"),
+      db.from("documentos_choferes").select("*,choferes(nombre,apellido)").lte("fecha_vencimiento", en15).order("fecha_vencimiento"),
+      db.from("cobranzas").select("*,clientes(nombre)").eq("tipo","cheque").eq("estado","pendiente").lte("fecha_vencimiento", en7).order("fecha_vencimiento"),
+      db.from("ventas").select("*,clientes(nombre)").eq("estado_cobro","pendiente").eq("condicion_pago","cuenta_corriente").order("fecha")
+    ]);
+
+    var alertas = [];
+    var hoyEnDias = function(fecha) { return Math.floor((new Date(fecha)-hoyFecha)/86400000); };
+
+    // Vencimientos camiones (urgentes en 15 días o menos)
+    (vencCam.data||[]).forEach(function(d) {
+      var dd = hoyEnDias(d.fecha_vencimiento);
+      if (dd <= 15) {
+        var emoji = dd < 0 ? "🔴" : (dd <= 3 ? "🟠" : "🟡");
+        alertas.push(emoji + " " + (d.camiones ? d.camiones.codigo : "?") + " " + d.tipo.replace(/_/g," ") + ": " + (dd<0 ? "VENCIDO hace "+Math.abs(dd)+"d" : dd===0 ? "VENCE HOY" : dd===1 ? "vence MAÑANA" : "vence en "+dd+"d"));
+      }
+    });
+    // Vencimientos choferes
+    (vencCh.data||[]).forEach(function(d) {
+      var dd = hoyEnDias(d.fecha_vencimiento);
+      if (dd <= 15) {
+        var emoji = dd < 0 ? "🔴" : (dd <= 3 ? "🟠" : "🟡");
+        alertas.push(emoji + " " + (d.choferes ? d.choferes.apellido : "?") + " " + d.tipo.replace(/_/g," ") + ": " + (dd<0 ? "VENCIDO hace "+Math.abs(dd)+"d" : dd===0 ? "VENCE HOY" : dd===1 ? "vence MAÑANA" : "vence en "+dd+"d"));
+      }
+    });
+    // Cheques por cobrar (próximos 7 días)
+    (cheques.data||[]).forEach(function(c) {
+      var dd = hoyEnDias(c.fecha_vencimiento);
+      if (dd <= 7) {
+        var emoji = dd < 0 ? "🔴" : (dd === 0 ? "🟢" : "🟡");
+        alertas.push(emoji + " Cheque " + (c.clientes ? c.clientes.nombre : "?") + " " + fmt(c.monto) + ": " + (dd<0 ? "VENCIDO hace "+Math.abs(dd)+"d" : dd===0 ? "COBRAR HOY" : dd===1 ? "cobrar MAÑANA" : "cobrar en "+dd+"d"));
+      }
+    });
+    // Ventas pendientes hace mucho (más de 30 días)
+    var ventasViejas = (ventasPendientes.data||[]).filter(function(v) {
+      var dias = hoyEnDias(v.fecha) * -1;
+      return dias >= 30;
+    });
+    if (ventasViejas.length > 0) {
+      // Agrupar por cliente y sumar
+      var porCliente = {};
+      ventasViejas.forEach(function(v) {
+        var cli = v.clientes ? v.clientes.nombre : "?";
+        if (!porCliente[cli]) porCliente[cli] = { total: 0, count: 0, masVieja: v.fecha };
+        porCliente[cli].total += Number(v.total_venta||0);
+        porCliente[cli].count += 1;
+        if (v.fecha < porCliente[cli].masVieja) porCliente[cli].masVieja = v.fecha;
+      });
+      Object.keys(porCliente).forEach(function(cli) {
+        var d = porCliente[cli];
+        var dias = hoyEnDias(d.masVieja) * -1;
+        alertas.push("💸 " + cli + " debe " + fmt(d.total) + " ("+d.count+" venta"+(d.count>1?"s":"")+", la más vieja hace "+dias+"d)");
+      });
+    }
+
+    if (alertas.length === 0) {
+      // Sin alertas: no mandar mensaje todos los días si todo está OK
+      return res.json({ok:true, msg:"Sin alertas", count:0});
+    }
+
+    var mensaje = "📅 BUEN DÍA, FEDE\n\nTu resumen del día:\n\n" + alertas.join("\n") + "\n\n— Bot La Unión Car";
+    await twilioClient.messages.create({
+      from: process.env.TWILIO_WHATSAPP_NUMBER,
+      to: destino,
+      body: mensaje
+    });
+    return res.json({ok:true, count:alertas.length, mensaje:mensaje});
+  } catch(e) {
+    console.error("Cron error:", e.message);
+    return res.status(500).json({error:e.message});
+  }
+});
 
 // Parser robusto: limpia markdown, escapes inválidos, y usa balanceo de llaves
 function extraerJSON(texto) {
