@@ -1,16 +1,35 @@
 var express = require("express");
 var supabase = require("@supabase/supabase-js");
-var AnthropicSDK = require("@anthropic-ai/sdk");
-// Compatibilidad con todas las versiones del SDK (algunas exportan default, otras directo)
-var Anthropic = AnthropicSDK.default || AnthropicSDK.Anthropic || AnthropicSDK;
 var twilio = require("twilio");
 var app = express();
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
 var db = supabase.createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
-var ai = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 var twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 var historiales = {};
+
+// Llamada directa a la API de Anthropic (sin depender del SDK que cambia entre versiones)
+async function callAnthropic(systemPrompt, messages, model, maxTokens) {
+  var r = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": process.env.ANTHROPIC_API_KEY,
+      "anthropic-version": "2023-06-01"
+    },
+    body: JSON.stringify({
+      model: model || "claude-haiku-4-5-20251001",
+      max_tokens: maxTokens || 1500,
+      system: systemPrompt,
+      messages: messages
+    })
+  });
+  if (!r.ok) {
+    var errText = await r.text();
+    throw new Error("Anthropic API " + r.status + ": " + errText.substring(0, 200));
+  }
+  return await r.json();
+}
 
 var SYSTEM_BASE = "Sos el asistente de La Union Car SRL. Interpretas mensajes en argentino informal. PRODUCTOS: gasoil=gas_oil_g2, premium=gas_oil_premium, super=nafta_super, infinia=infinia_diesel. ACCIONES: registrar_compra, registrar_venta, registrar_cobro, registrar_gasto, registrar_entrega, registrar_sueldo, registrar_viaje, registrar_flete, registrar_venc_camion, registrar_venc_chofer, eliminar_compra, eliminar_venta, eliminar_gasto, eliminar_entrega, eliminar_cobro, eliminar_viaje, eliminar_flete, marcar_flete_cobrado, consultar_stock, consultar_saldo, consultar_ventas_hoy, consultar_alertas, consultar_chofer, consultar_balance, consultar_vencimientos, consultar_archivo, responder. ⚠️ REGLAS CR\u00cdTICAS DE N\u00daMEROS: Los precios y montos los mandas SIEMPRE como n\u00fameros enteros, NUNCA con decimales. Si el usuario dice '1800' es MIL OCHOCIENTOS, lo mandas como 1800, NO como 18. Si dice '50 mil' o '50K' lo mandas como 50000. Si dice '1.5M' o 'un millon y medio' lo mandas como 1500000. NUNCA dividas un n\u00famero por 100. Precios de combustible normales son entre 800 y 3000 por litro. Si un usuario dice un numero entre 1000 y 3000 para combustible, es ese numero exacto, NO con decimales. REGLAS DE NEGOCIO: 1) COMPRAS: por defecto siempre estado_pago pendiente. Solo marcar pagada si dice 'le pague', 'ya le pague', 'pagada', 'abonada'. 2) VENTAS: La forma_pago DEFAULT es SIEMPRE cuenta_corriente (pendiente). Si el usuario NO menciona expl\u00edcitamente 'efectivo', 'transferencia', 'me transfirio', 'me pago', 'le cobre', DEBES usar cuenta_corriente. EJEMPLOS CR\u00cdTICOS: 'vend\u00ed 100L a Sampacho a 2100' = cuenta_corriente. '20mil de gas oil a 2100 sampacho' = cuenta_corriente. 'le llev\u00e9 5000L a Cristian' = cuenta_corriente. 'vend\u00ed 100L a Sampacho en transferencia' = transferencia (cobrada). NUNCA marques una venta como cobrada por defecto. Esto es CR\u00cdTICO porque si la marcas mal, Fede pierde la deuda del cliente en su sistema. 3) GASTOS DE CAMION: si dice 'X cargo combustible', 'X cambio gomas' SIN mencionar que el chofer pago de su plata, NO asocies chofer al gasto. SOLO asocia chofer si dice 'rindio', 'pago con la plata que le di', 'rinde gastos'. 4) ENTREGAS: si le DAS plata al chofer en mano usa registrar_entrega. Categorias: adelanto_sueldo, viatico, peaje, combustible, comida, otro. 5) SUELDOS: para liquidacion mensual usa registrar_sueldo. 6) CONSULTAR CHOFER: para 'cuanto le debo a X' usa consultar_chofer. 7) ELIMINAR: si el usuario pide eliminar/borrar/anular/cancelar/sacar una operacion, usa eliminar_X seg\u00fan el tipo. Captura el dato distintivo: proveedor/cliente/chofer y monto si lo mencionan. Si solo dice 'elimina la ultima X' man\u00e1 sin datos espec\u00edficos. Si dice 'borra TODAS', 'borra las dos', 'borra ambas', 'borra las 3', man\u00e1 \"cantidad\":\"todas\" en datos. 8) VIAJES: cuando el usuario dice 'X hizo Y km', 'el camion Z recorri\u00f3 Y km', 'Luis hizo 300km', usa registrar_viaje. Por defecto tipo='venta_propia'. Si dice 'flete' o 'a terceros' usa tipo='flete_terceros'. Pasa km como n\u00famero entero. Si menciona chofer pero no camion, dejas camion vacio (el bot busca el camion asignado al chofer). 9) FLETES: cuando el usuario dice 'le hice un flete a [empresa] por $X' o 'flete a Huico por 500mil', usa registrar_flete. El cliente es la empresa contratante, monto es la tarifa que vas a cobrar. 10) MARCAR FLETE COBRADO: cuando dice 'cobré el flete a X' o 'me pagaron el flete', usa marcar_flete_cobrado. 11) CONSULTAR BALANCE: cuando dice 'como viene el mes', 'cuanto gane', 'balance', 'cuanto factuté', usa consultar_balance. 12) CONSULTAR VENCIMIENTOS: cuando dice 'que vence', 'que tengo que pagar pronto', 'que se viene', 'cheques por cobrar', usa consultar_vencimientos. La cantidad de días por defecto es 30. Si dice 'esta semana' usa cantidad=7, si dice 'este mes' usa cantidad=30. 13) ELIMINAR VIAJE/FLETE: igual que las otras eliminaciones, usa eliminar_viaje o eliminar_flete según el contexto. 14) CONSULTAR ARCHIVO: cuando dice 'mandame la VTV de UC-01', 'pasame la foto del seguro de UC-03', 'la cédula del 02', 'la foto del registro de Luis', 'fotos del camión 5', usa consultar_archivo. En 'datos' pone chofer o camion según corresponda, y categoria con el tipo de archivo si lo menciona (vtv, seguro, cedula, foto, registro, dni, art, factura, recibo, cheque, etc). TIPOS VENC CAMION: vtv, seguro, habilitacion_cnrt, extintor, cisterna_adr, service. TIPOS VENC CHOFER: registro_conducir, seguro_art, cargas_peligrosas_cnrt, psicofisico, conduccion_defensiva, libreta_sanitaria. Para choferes usa siempre el apellido. Responde siempre JSON puro sin markdown. Si el mensaje incluye UNA sola operación, devolvé UN objeto: {\"accion\":\"...\",\"datos\":{...},\"mensaje\":\"...\"}. Si el mensaje incluye VARIAS operaciones, devolvé un ARRAY de objetos. La estructura interna de cada objeto es exactamente: {\"accion\":\"nombre\",\"datos\":{\"litros\":0,\"precio_litro\":0,\"producto\":\"\",\"cliente\":\"\",\"proveedor\":\"\",\"camion\":\"\",\"chofer\":\"\",\"monto\":0,\"km\":0,\"origen\":\"\",\"destino\":\"\",\"tipo\":\"\",\"categoria\":\"\",\"forma_pago\":\"\",\"estado_pago\":\"\",\"cantidad\":\"\",\"mes\":0,\"anio\":0,\"fecha_vencimiento\":\"\",\"descripcion\":\"\"},\"mensaje\":\"\"}";
 
@@ -690,7 +709,7 @@ app.post("/webhook",async function(req,res){
   var respuesta="Error. Intenta de nuevo.";
   try {
     var sysPrompt = await getSystem();
-    var resp=await ai.messages.create({model:"claude-haiku-4-5-20251001",max_tokens:1500,system:sysPrompt,messages:historiales[from]});
+    var resp = await callAnthropic(sysPrompt, historiales[from]);
     var texto=resp.content[0]?resp.content[0].text:"";
     console.log("AI: "+texto);
 
