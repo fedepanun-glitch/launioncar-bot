@@ -8,9 +8,52 @@ var db = supabase.createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KE
 var twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 var historiales = {};
 
+// ── DIAGNÓSTICO DE ARRANQUE ──
+console.log("=== BOT v3.0 - INICIANDO ===");
+console.log("Node:", process.version);
+console.log("Tiene fetch global:", typeof fetch !== "undefined");
+console.log("SUPABASE_URL configurado:", !!process.env.SUPABASE_URL);
+console.log("SUPABASE_KEY configurado:", !!process.env.SUPABASE_KEY);
+console.log("ANTHROPIC_API_KEY configurado:", !!process.env.ANTHROPIC_API_KEY);
+console.log("TWILIO_ACCOUNT_SID configurado:", !!process.env.TWILIO_ACCOUNT_SID);
+console.log("============================");
+
+// Fallback: si Node es <18 no tiene fetch global, usamos node-fetch o https
+var _fetch = typeof fetch !== "undefined" ? fetch : null;
+if (!_fetch) {
+  // Si fetch no está, usar https nativo
+  var https = require("https");
+  _fetch = function(url, opts) {
+    return new Promise(function(resolve, reject) {
+      var u = new URL(url);
+      var req = https.request({
+        hostname: u.hostname,
+        path: u.pathname + u.search,
+        method: opts.method || "GET",
+        headers: opts.headers || {}
+      }, function(res) {
+        var data = "";
+        res.on("data", function(c) { data += c; });
+        res.on("end", function() {
+          resolve({
+            ok: res.statusCode >= 200 && res.statusCode < 300,
+            status: res.statusCode,
+            text: function() { return Promise.resolve(data); },
+            json: function() { return Promise.resolve(JSON.parse(data)); }
+          });
+        });
+      });
+      req.on("error", reject);
+      if (opts.body) req.write(opts.body);
+      req.end();
+    });
+  };
+  console.log("Usando https nativo (fetch no disponible)");
+}
+
 // Llamada directa a la API de Anthropic (sin depender del SDK que cambia entre versiones)
 async function callAnthropic(systemPrompt, messages, model, maxTokens) {
-  var r = await fetch("https://api.anthropic.com/v1/messages", {
+  var r = await _fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -62,6 +105,29 @@ async function getSystem() {
 }
 
 function hoy() { return new Date().toISOString().split("T")[0]; }
+
+// Convertir cualquier formato común de fecha a YYYY-MM-DD (formato Postgres)
+function parseFecha(s) {
+  if (!s) return null;
+  s = String(s).trim();
+  // Ya está en formato ISO YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  // Formato DD/MM/YYYY o DD-MM-YYYY o DD/MM/YY (argentino)
+  var m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
+  if (m) {
+    var dd = m[1].padStart(2, "0");
+    var mm = m[2].padStart(2, "0");
+    var yyyy = m[3].length === 2 ? "20" + m[3] : m[3];
+    // Validar valores razonables
+    if (parseInt(dd) > 31 || parseInt(mm) > 12) return null;
+    return yyyy + "-" + mm + "-" + dd;
+  }
+  // Intentar con Date.parse como última opción
+  var d = new Date(s);
+  if (!isNaN(d.getTime())) return d.toISOString().split("T")[0];
+  return null;
+}
+
 function pM(s) { if (!s) return null; var x=s.toString().replace(/[$]/g,"").replace(/[.]/g,"").replace(/,/g,".").trim(); if (x.toUpperCase().endsWith("M")) return parseFloat(x)*1000000; if (x.toUpperCase().endsWith("K")) return parseFloat(x)*1000; return parseFloat(x); }
 function mP(t) { if (!t) return "gas_oil_g2"; var x=t.toLowerCase(); if (x.includes("super")||x.includes("sup")) return "nafta_super"; if (x.includes("infinia")) return "infinia_diesel"; if (x.includes("premium")||x.includes("euro")) return "gas_oil_premium"; return "gas_oil_g2"; }
 function fmt(n) { return "$"+Number(n).toLocaleString("es-AR"); }
@@ -215,9 +281,25 @@ async function run(accion,datos) {
       return {ok:true,msg:"Liquidacion "+ch.apellido+" "+mes+"/"+anio+"\nFijo: "+fmt(sf)+"\nKm: "+cc.km.toLocaleString("es-AR")+" x "+fmt(tk)+" = "+fmt(totalKm)+"\nViajes: "+cc.viajes+" x "+fmt(tv)+" = "+fmt(totalViajes)+"\nBruto: "+fmt(bruto)+"\nEntregas: "+fmt(cc.entregas)+"\nRendido: "+fmt(cc.rendido)+"\nAdelantos: "+fmt(adelantos)+"\nNETO: "+fmt(neto)};
     }
 
-    if (accion==="registrar_venc_camion") { var cam=await find("camiones","codigo",datos.camion); if (!cam) return {ok:false,msg:"No encontre el camion "+datos.camion}; if (!datos.fecha_vencimiento) return {ok:false,msg:"Falta la fecha"}; var e=await db.from("documentos_camiones").insert([{camion_id:cam.id,tipo:datos.tipo||"vtv",fecha_vencimiento:datos.fecha_vencimiento,notas:datos.descripcion||null}]); if (e.error) return {ok:false,msg:e.error.message}; return {ok:true,msg:"Vencimiento OK\n"+cam.codigo+" - "+(datos.tipo||"vtv")+"\n"+datos.fecha_vencimiento}; }
+    if (accion==="registrar_venc_camion") {
+      var cam=await find("camiones","codigo",datos.camion);
+      if (!cam) return {ok:false,msg:"No encontre el camion "+datos.camion};
+      var fechaParsed = parseFecha(datos.fecha_vencimiento);
+      if (!fechaParsed) return {ok:false,msg:"Fecha inválida. Mandá la fecha en formato DD/MM/AAAA (ej: 14/04/2027)"};
+      var e=await db.from("documentos_camiones").insert([{camion_id:cam.id,tipo:datos.tipo||"vtv",fecha_vencimiento:fechaParsed,notas:datos.descripcion||null}]);
+      if (e.error) return {ok:false,msg:e.error.message};
+      return {ok:true,msg:"✅ Vencimiento OK\n"+cam.codigo+" - "+(datos.tipo||"vtv")+"\nVence: "+fechaParsed};
+    }
 
-    if (accion==="registrar_venc_chofer") { var ch=await findChofer(datos.chofer); if (!ch) return {ok:false,msg:"No encontre al chofer "+datos.chofer+". Usa el apellido exacto."}; if (!datos.fecha_vencimiento) return {ok:false,msg:"Falta la fecha"}; var e=await db.from("documentos_choferes").insert([{chofer_id:ch.id,tipo:datos.tipo||"registro_conducir",fecha_vencimiento:datos.fecha_vencimiento,notas:datos.descripcion||null}]); if (e.error) return {ok:false,msg:e.error.message}; return {ok:true,msg:"Vencimiento OK\n"+ch.nombre+" "+ch.apellido+" - "+(datos.tipo||"registro_conducir")+"\n"+datos.fecha_vencimiento}; }
+    if (accion==="registrar_venc_chofer") {
+      var ch=await findChofer(datos.chofer);
+      if (!ch) return {ok:false,msg:"No encontre al chofer "+datos.chofer+". Usa el apellido exacto."};
+      var fechaParsed = parseFecha(datos.fecha_vencimiento);
+      if (!fechaParsed) return {ok:false,msg:"Fecha inválida. Mandá la fecha en formato DD/MM/AAAA (ej: 14/04/2027)"};
+      var e=await db.from("documentos_choferes").insert([{chofer_id:ch.id,tipo:datos.tipo||"registro_conducir",fecha_vencimiento:fechaParsed,notas:datos.descripcion||null}]);
+      if (e.error) return {ok:false,msg:e.error.message};
+      return {ok:true,msg:"✅ Vencimiento OK\n"+ch.nombre+" "+ch.apellido+" - "+(datos.tipo||"registro_conducir")+"\nVence: "+fechaParsed};
+    }
 
     if (accion==="registrar_viaje") {
       var km = pM(datos.km || datos.monto);
@@ -242,13 +324,7 @@ async function run(accion,datos) {
       }
       if (!cam) return {ok:false, msg:"No encontré el camión. Decime cuál (UC-01, UC-02, etc) o pasame el nombre del chofer."};
       var tipo = (datos.tipo === "flete_terceros" || datos.tipo === "flete" || (datos.tipo||"").toLowerCase().includes("flete")) ? "flete_terceros" : "venta_propia";
-      var fecha = datos.fecha_vencimiento || hoy();
-      // Si la fecha viene en formato DD/MM/YYYY o DD/MM convertir a YYYY-MM-DD
-      if (fecha && fecha.indexOf("/") !== -1) {
-        var p = fecha.split("/");
-        if (p.length === 3) { var y = p[2].length === 2 ? "20"+p[2] : p[2]; fecha = y+"-"+p[1].padStart(2,"0")+"-"+p[0].padStart(2,"0"); }
-        else fecha = hoy();
-      }
+      var fecha = parseFecha(datos.fecha_vencimiento || datos.fecha) || hoy();
       var e = await db.from("viajes").insert([{
         camion_id: cam.id,
         chofer_id: ch ? ch.id : null,
