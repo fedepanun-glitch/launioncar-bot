@@ -7,9 +7,11 @@ app.use(express.json());
 var db = supabase.createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 var twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 var historiales = {};
+// Último vencimiento cargado por cada usuario (para adjuntar archivos al siguiente mensaje)
+var window_ultimoVenc = {};
 
 // ── DIAGNÓSTICO DE ARRANQUE ──
-console.log("=== BOT v3.2 - PARSER FINO + CONFIRMACIONES ===");
+console.log("=== BOT v3.3 - ARCHIVOS POR WHATSAPP ===");
 console.log("Node:", process.version);
 console.log("Tiene fetch global:", typeof fetch !== "undefined");
 console.log("SUPABASE_URL configurado:", !!process.env.SUPABASE_URL);
@@ -209,7 +211,7 @@ async function cuentaChofer(chofer_id, mes, anio) {
   return { km:km, viajes:viajes, entregas:entregas, rendido:rendido };
 }
 
-async function run(accion,datos) {
+async function run(accion,datos,contextFrom) {
   try {
     if (accion==="registrar_compra") {
       var p=await find("proveedores","nombre",datos.proveedor);
@@ -327,7 +329,15 @@ async function run(accion,datos) {
       if (e.error) return {ok:false,msg:e.error.message};
       if (!e.data || e.data.length === 0) return {ok:false,msg:"❌ Insert falló silenciosamente en documentos_camiones"};
       var sufijo = reemplazos > 0 ? "\n♻️ Reemplazó "+reemplazos+" vencimiento"+(reemplazos>1?"s":"")+" anterior"+(reemplazos>1?"es":"") : "";
-      return {ok:true,msg:"✅ Vencimiento OK\n"+cam.codigo+" - "+tipoVenc+"\nVence: "+fechaParsed+sufijo};
+      // Guardar para adjuntar archivos si el siguiente mensaje trae uno
+      window_ultimoVenc[contextFrom] = {
+        entidadTipo: "camion",
+        entidadId: cam.id,
+        tipoDoc: tipoVenc,
+        descripcion: cam.codigo + " " + tipoVenc
+      };
+      var sufijoArchivo = "\n📎 Podés mandarme la foto/PDF del documento si querés adjuntarlo.";
+      return {ok:true,msg:"✅ Vencimiento OK\n"+cam.codigo+" - "+tipoVenc+"\nVence: "+fechaParsed+sufijo+sufijoArchivo};
     }
 
     if (accion==="registrar_venc_chofer") {
@@ -360,7 +370,14 @@ async function run(accion,datos) {
       }
       console.log("[VENC_CHOFER] OK insertado con id:", e.data[0].id);
       var sufijo = reemplazos > 0 ? "\n♻️ Reemplazó "+reemplazos+" vencimiento"+(reemplazos>1?"s":"")+" anterior"+(reemplazos>1?"es":"") : "";
-      return {ok:true,msg:"✅ Vencimiento OK\n"+ch.nombre+" "+ch.apellido+" - "+tipoVenc+"\nVence: "+fechaParsed+sufijo};
+      window_ultimoVenc[contextFrom] = {
+        entidadTipo: "chofer",
+        entidadId: ch.id,
+        tipoDoc: tipoVenc,
+        descripcion: ch.nombre+" "+ch.apellido+" "+tipoVenc
+      };
+      var sufArchCh = "\n📎 Podés mandarme la foto/PDF del documento si querés adjuntarlo.";
+      return {ok:true,msg:"✅ Vencimiento OK\n"+ch.nombre+" "+ch.apellido+" - "+tipoVenc+"\nVence: "+fechaParsed+sufijo+sufArchCh};
     }
 
     // Helper: buscar semi por código o por camión asignado
@@ -392,7 +409,14 @@ async function run(accion,datos) {
       if (eS.error) return {ok:false,msg:eS.error.message};
       if (!eS.data || eS.data.length === 0) return {ok:false,msg:"❌ Insert falló silenciosamente en documentos_semirremolques"};
       var sufS = reemplS > 0 ? "\n♻️ Reemplazó "+reemplS+" vencimiento"+(reemplS>1?"s":"")+" anterior"+(reemplS>1?"es":"") : "";
-      return {ok:true,msg:"✅ Vencimiento OK\n🚚 "+semi.codigo+(semi.patente?" ("+semi.patente+")":"")+" - "+tipoVS+"\nVence: "+fechaP+sufS};
+      window_ultimoVenc[contextFrom] = {
+        entidadTipo: "semi",
+        entidadId: semi.id,
+        tipoDoc: tipoVS,
+        descripcion: semi.codigo+" "+tipoVS
+      };
+      var sufArchS = "\n📎 Podés mandarme la foto/PDF del documento si querés adjuntarlo.";
+      return {ok:true,msg:"✅ Vencimiento OK\n🚚 "+semi.codigo+(semi.patente?" ("+semi.patente+")":"")+" - "+tipoVS+"\nVence: "+fechaP+sufS+sufArchS};
     }
 
     if (accion==="registrar_semi") {
@@ -910,7 +934,42 @@ function extraerJSON(texto) {
 }
 
 app.post("/webhook",async function(req,res){
-  var from=req.body.From; var body=req.body.Body?req.body.Body.trim():"";
+  var from=req.body.From;
+  var body=req.body.Body?req.body.Body.trim():"";
+  var numMedia = parseInt(req.body.NumMedia||"0",10);
+
+  // === MANEJO DE ARCHIVOS RECIBIDOS POR WHATSAPP ===
+  if (numMedia > 0) {
+    console.log("[ARCHIVO] Recibidos "+numMedia+" archivo(s) de "+from);
+    // Recuperar el último vencimiento creado por este usuario
+    var ultimo = window_ultimoVenc[from];
+    if (!ultimo) {
+      var msgErr = "📎 Recibí "+numMedia+" archivo(s) pero no sé a qué vencimiento adjuntarlos. Primero cargá un vencimiento (ej: 'vtv del UC-04 vence 11/03/2027') y después mandame la foto/PDF en el siguiente mensaje.";
+      await enviarRespuestaTwilio(from, msgErr);
+      return res.status(200).send("<Response></Response>");
+    }
+    // Procesar cada archivo
+    var subidos = 0;
+    var errores = [];
+    for (var i=0; i<numMedia; i++) {
+      var mediaUrl = req.body["MediaUrl"+i];
+      var mediaType = req.body["MediaContentType"+i] || "application/octet-stream";
+      try {
+        await procesarArchivoAdjunto(mediaUrl, mediaType, ultimo);
+        subidos++;
+      } catch(e) {
+        console.error("[ARCHIVO] Error procesando archivo "+i+":", e.message);
+        errores.push(e.message);
+      }
+    }
+    var msg = subidos>0
+      ? "📎 "+subidos+" archivo(s) adjuntado(s) a "+ultimo.descripcion+" ✅"
+      : "❌ No pude subir los archivos: "+errores.join(", ");
+    if (subidos>0 && errores.length>0) msg += "\n⚠️ "+errores.length+" fallaron";
+    await enviarRespuestaTwilio(from, msg);
+    return res.status(200).send("<Response></Response>");
+  }
+
   if (!body) return res.status(200).send("<Response></Response>");
   console.log("Msg: "+body);
   if (!historiales[from]) historiales[from]=[];
@@ -944,7 +1003,7 @@ app.post("/webhook",async function(req,res){
       for (var i=0; i<parsed.length; i++) {
         var op = parsed[i];
         if (op && op.accion && op.accion !== "responder") {
-          var r = await run(op.accion, op.datos || {});
+          var r = await run(op.accion, op.datos || {}, from);
           if (r.ok) { okCount++; msgs.push((i+1)+") "+(r.msg || op.mensaje || "Listo")); }
           else { errCount++; msgs.push((i+1)+") ❌ "+(r.msg || "Error")); }
           // Recolectar archivos si la acción los devolvió
@@ -958,7 +1017,7 @@ app.post("/webhook",async function(req,res){
     }
     // Si fue un solo objeto, comportamiento original
     else if (parsed.accion && parsed.accion !== "responder") {
-      var r = await run(parsed.accion, parsed.datos || {});
+      var r = await run(parsed.accion, parsed.datos || {}, from);
       respuesta = r.ok ? (r.msg || parsed.mensaje || "Listo!") : (r.msg || "Error.");
       if (r.archivos && r.archivos.length) archivosAEnviar = r.archivos;
     }
@@ -992,4 +1051,90 @@ app.post("/webhook",async function(req,res){
 });
 
 var PORT=process.env.PORT||3000;
+
+// === FUNCIONES PARA RECIBIR ARCHIVOS POR WHATSAPP ===
+
+// Descarga el archivo desde la URL de Twilio (con auth basic)
+function descargarArchivoTwilio(url) {
+  return new Promise(function(resolve, reject) {
+    var auth = "Basic " + Buffer.from(process.env.TWILIO_ACCOUNT_SID+":"+process.env.TWILIO_AUTH_TOKEN).toString("base64");
+    var doRequest = function(reqUrl) {
+      var u = new URL(reqUrl);
+      var protocol = u.protocol === "https:" ? require("https") : require("http");
+      protocol.get({
+        hostname: u.hostname,
+        path: u.pathname + u.search,
+        headers: {"Authorization": auth}
+      }, function(res) {
+        // Manejar redirects
+        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+          return doRequest(res.headers.location);
+        }
+        if (res.statusCode !== 200) {
+          return reject(new Error("HTTP "+res.statusCode));
+        }
+        var chunks = [];
+        res.on("data", function(c) { chunks.push(c); });
+        res.on("end", function() { resolve(Buffer.concat(chunks)); });
+      }).on("error", reject);
+    };
+    doRequest(url);
+  });
+}
+
+// Procesa un archivo adjunto: lo descarga, sube a Supabase Storage y crea registro
+async function procesarArchivoAdjunto(mediaUrl, mediaType, ultimoVenc) {
+  // 1) Descargar de Twilio
+  var fileBuffer = await descargarArchivoTwilio(mediaUrl);
+  // 2) Determinar extensión por mimetype
+  var ext = "bin";
+  if (mediaType.includes("jpeg") || mediaType.includes("jpg")) ext = "jpg";
+  else if (mediaType.includes("png")) ext = "png";
+  else if (mediaType.includes("pdf")) ext = "pdf";
+  else if (mediaType.includes("webp")) ext = "webp";
+  else if (mediaType.includes("heic")) ext = "heic";
+  // 3) Path en storage
+  var timestamp = Date.now();
+  var random = Math.random().toString(36).substring(2,8);
+  var nombreArchivo = ultimoVenc.tipoDoc + "_" + timestamp + "_" + random + "." + ext;
+  var storagePath = ultimoVenc.entidadTipo + "/" + ultimoVenc.entidadId + "/" + nombreArchivo;
+  // 4) Subir a Supabase Storage
+  var up = await db.storage.from("documentos").upload(storagePath, fileBuffer, {
+    contentType: mediaType,
+    upsert: false
+  });
+  if (up.error) throw new Error("Storage: "+up.error.message);
+  // 5) Obtener URL pública
+  var pubUrl = db.storage.from("documentos").getPublicUrl(storagePath);
+  var publicUrl = pubUrl.data ? pubUrl.data.publicUrl : null;
+  // 6) Insertar en tabla archivos
+  var ins = await db.from("archivos").insert([{
+    entidad_tipo: ultimoVenc.entidadTipo,
+    entidad_id: ultimoVenc.entidadId,
+    categoria: ultimoVenc.tipoDoc,
+    nombre: nombreArchivo,
+    url: publicUrl,
+    storage_path: storagePath,
+    mime_type: mediaType,
+    tamano_bytes: fileBuffer.length,
+    descripcion: "Recibido por WhatsApp - " + ultimoVenc.descripcion
+  }]).select();
+  if (ins.error) throw new Error("DB: "+ins.error.message);
+  console.log("[ARCHIVO] Subido OK:", storagePath);
+  return ins.data[0];
+}
+
+// Envía un mensaje libre por WhatsApp
+async function enviarRespuestaTwilio(to, mensaje) {
+  try {
+    await twilio.messages.create({
+      from: process.env.TWILIO_WHATSAPP_NUMBER,
+      to: to,
+      body: mensaje
+    });
+  } catch(e) {
+    console.error("Error enviando msg:", e.message);
+  }
+}
+
 app.listen(PORT,function(){console.log("Bot andando en puerto "+PORT);});
