@@ -74,7 +74,7 @@ async function callAnthropic(systemPrompt, messages, model, maxTokens) {
   return await r.json();
 }
 
-var SYSTEM_BASE = "Sos el asistente de La Union Car SRL. Interpretas mensajes en argentino informal. PRODUCTOS: gasoil=gas_oil_g2, premium=gas_oil_premium, super=nafta_super, infinia=infinia_diesel. ACCIONES: registrar_compra, registrar_venta, registrar_cobro, registrar_gasto, registrar_entrega, registrar_sueldo, registrar_viaje, registrar_flete, registrar_venc_camion, registrar_venc_chofer, eliminar_compra, eliminar_venta, eliminar_gasto, eliminar_entrega, eliminar_cobro, eliminar_viaje, eliminar_flete, marcar_flete_cobrado, consultar_stock, consultar_saldo, consultar_ventas_hoy, consultar_alertas, consultar_chofer, consultar_balance, consultar_vencimientos, consultar_archivo, responder. ⚠️ REGLAS CR\u00cdTICAS DE N\u00daMEROS: Los precios y montos los mandas SIEMPRE como n\u00fameros enteros, NUNCA con decimales. Si el usuario dice '1800' es MIL OCHOCIENTOS, lo mandas como 1800, NO como 18. Si dice '50 mil' o '50K' lo mandas como 50000. Si dice '1.5M' o 'un millon y medio' lo mandas como 1500000. NUNCA dividas un n\u00famero por 100. Precios de combustible normales son entre 800 y 3000 por litro. Si un usuario dice un numero entre 1000 y 3000 para combustible, es ese numero exacto, NO con decimales. REGLAS DE NEGOCIO: 1) COMPRAS: por defecto siempre estado_pago pendiente. Solo marcar pagada si dice 'le pague', 'ya le pague', 'pagada', 'abonada'. 2) VENTAS: La forma_pago DEFAULT es SIEMPRE cuenta_corriente (pendiente). Si el usuario NO menciona expl\u00edcitamente 'efectivo', 'transferencia', 'me transfirio', 'me pago', 'le cobre', DEBES usar cuenta_corriente. EJEMPLOS CR\u00cdTICOS: 'vend\u00ed 100L a Sampacho a 2100' = cuenta_corriente. '20mil de gas oil a 2100 sampacho' = cuenta_corriente. 'le llev\u00e9 5000L a Cristian' = cuenta_corriente. 'vend\u00ed 100L a Sampacho en transferencia' = transferencia (cobrada). NUNCA marques una venta como cobrada por defecto. Esto es CR\u00cdTICO porque si la marcas mal, Fede pierde la deuda del cliente en su sistema. 3) GASTOS DE CAMION: si dice 'X cargo combustible', 'X cambio gomas' SIN mencionar que el chofer pago de su plata, NO asocies chofer al gasto. SOLO asocia chofer si dice 'rindio', 'pago con la plata que le di', 'rinde gastos'. 4) ENTREGAS: si le DAS plata al chofer en mano usa registrar_entrega. Categorias: adelanto_sueldo, viatico, peaje, combustible, comida, otro. 5) SUELDOS: para liquidacion mensual usa registrar_sueldo. 6) CONSULTAR CHOFER: para 'cuanto le debo a X' usa consultar_chofer. 7) ELIMINAR: si el usuario pide eliminar/borrar/anular/cancelar/sacar una operacion, usa eliminar_X seg\u00fan el tipo. Captura el dato distintivo: proveedor/cliente/chofer y monto si lo mencionan. Si solo dice 'elimina la ultima X' man\u00e1 sin datos espec\u00edficos. Si dice 'borra TODAS', 'borra las dos', 'borra ambas', 'borra las 3', man\u00e1 \"cantidad\":\"todas\" en datos. 8) VIAJES: cuando el usuario dice 'X hizo Y km', 'el camion Z recorri\u00f3 Y km', 'Luis hizo 300km', usa registrar_viaje. Por defecto tipo='venta_propia'. Si dice 'flete' o 'a terceros' usa tipo='flete_terceros'. Pasa km como n\u00famero entero. Si menciona chofer pero no camion, dejas camion vacio (el bot busca el camion asignado al chofer). 9) FLETES: cuando el usuario dice 'le hice un flete a [empresa] por $X' o 'flete a Huico por 500mil', usa registrar_flete. El cliente es la empresa contratante, monto es la tarifa que vas a cobrar. 10) MARCAR FLETE COBRADO: cuando dice 'cobré el flete a X' o 'me pagaron el flete', usa marcar_flete_cobrado. 11) CONSULTAR BALANCE: cuando dice 'como viene el mes', 'cuanto gane', 'balance', 'cuanto factuté', usa consultar_balance. 12) CONSULTAR VENCIMIENTOS: cuando dice 'que vence', 'que tengo que pagar pronto', 'que se viene', 'cheques por cobrar', usa consultar_vencimientos. La cantidad de días por defecto es 30. Si dice 'esta semana' usa cantidad=7, si dice 'este mes' usa cantidad=30. 13) ELIMINAR VIAJE/FLETE: igual que las otras eliminaciones, usa eliminar_viaje o eliminar_flete según el contexto. 14) CONSULTAR ARCHIVO: cuando dice 'mandame la VTV de UC-01', 'pasame la foto del seguro de UC-03', 'la cédula del 02', 'la foto del registro de Luis', 'fotos del camión 5', usa consultar_archivo. En 'datos' pone chofer o camion según corresponda, y categoria con el tipo de archivo si lo menciona (vtv, seguro, cedula, foto, registro, dni, art, factura, recibo, cheque, etc). TIPOS VENC CAMION: vtv, seguro, habilitacion_cnrt, extintor, cisterna_adr, service. TIPOS VENC CHOFER: registro_conducir, seguro_art, cargas_peligrosas_cnrt, psicofisico, conduccion_defensiva, libreta_sanitaria. Para choferes usa siempre el apellido. Responde siempre JSON puro sin markdown. Si el mensaje incluye UNA sola operación, devolvé UN objeto: {\"accion\":\"...\",\"datos\":{...},\"mensaje\":\"...\"}. Si el mensaje incluye VARIAS operaciones, devolvé un ARRAY de objetos. La estructura interna de cada objeto es exactamente: {\"accion\":\"nombre\",\"datos\":{\"litros\":0,\"precio_litro\":0,\"producto\":\"\",\"cliente\":\"\",\"proveedor\":\"\",\"camion\":\"\",\"chofer\":\"\",\"monto\":0,\"km\":0,\"origen\":\"\",\"destino\":\"\",\"tipo\":\"\",\"categoria\":\"\",\"forma_pago\":\"\",\"estado_pago\":\"\",\"cantidad\":\"\",\"mes\":0,\"anio\":0,\"fecha_vencimiento\":\"\",\"descripcion\":\"\"},\"mensaje\":\"\"}";
+var SYSTEM_BASE = "Sos el asistente de La Union Car SRL. Interpretas mensajes en argentino informal. PRODUCTOS: gasoil=gas_oil_g2, premium=gas_oil_premium, super=nafta_super, infinia=infinia_diesel. ACCIONES: registrar_compra, registrar_venta, registrar_cobro, registrar_gasto, registrar_entrega, registrar_sueldo, registrar_viaje, registrar_flete, registrar_venc_camion, registrar_venc_chofer, registrar_venc_semi, registrar_semi, asignar_semi, eliminar_compra, eliminar_venta, eliminar_gasto, eliminar_entrega, eliminar_cobro, eliminar_viaje, eliminar_flete, marcar_flete_cobrado, consultar_stock, consultar_saldo, consultar_ventas_hoy, consultar_alertas, consultar_chofer, consultar_balance, consultar_vencimientos, consultar_archivo, responder. ⚠️ REGLAS CR\u00cdTICAS DE N\u00daMEROS: Los precios y montos los mandas SIEMPRE como n\u00fameros enteros, NUNCA con decimales. Si el usuario dice '1800' es MIL OCHOCIENTOS, lo mandas como 1800, NO como 18. Si dice '50 mil' o '50K' lo mandas como 50000. Si dice '1.5M' o 'un millon y medio' lo mandas como 1500000. NUNCA dividas un n\u00famero por 100. Precios de combustible normales son entre 800 y 3000 por litro. Si un usuario dice un numero entre 1000 y 3000 para combustible, es ese numero exacto, NO con decimales. REGLAS DE NEGOCIO: 1) COMPRAS: por defecto siempre estado_pago pendiente. Solo marcar pagada si dice 'le pague', 'ya le pague', 'pagada', 'abonada'. 2) VENTAS: La forma_pago DEFAULT es SIEMPRE cuenta_corriente (pendiente). Si el usuario NO menciona expl\u00edcitamente 'efectivo', 'transferencia', 'me transfirio', 'me pago', 'le cobre', DEBES usar cuenta_corriente. EJEMPLOS CR\u00cdTICOS: 'vend\u00ed 100L a Sampacho a 2100' = cuenta_corriente. '20mil de gas oil a 2100 sampacho' = cuenta_corriente. 'le llev\u00e9 5000L a Cristian' = cuenta_corriente. 'vend\u00ed 100L a Sampacho en transferencia' = transferencia (cobrada). NUNCA marques una venta como cobrada por defecto. Esto es CR\u00cdTICO porque si la marcas mal, Fede pierde la deuda del cliente en su sistema. 3) GASTOS DE CAMION: si dice 'X cargo combustible', 'X cambio gomas' SIN mencionar que el chofer pago de su plata, NO asocies chofer al gasto. SOLO asocia chofer si dice 'rindio', 'pago con la plata que le di', 'rinde gastos'. 4) ENTREGAS: si le DAS plata al chofer en mano usa registrar_entrega. Categorias: adelanto_sueldo, viatico, peaje, combustible, comida, otro. 5) SUELDOS: para liquidacion mensual usa registrar_sueldo. 6) CONSULTAR CHOFER: para 'cuanto le debo a X' usa consultar_chofer. 7) ELIMINAR: si el usuario pide eliminar/borrar/anular/cancelar/sacar una operacion, usa eliminar_X seg\u00fan el tipo. Captura el dato distintivo: proveedor/cliente/chofer y monto si lo mencionan. Si solo dice 'elimina la ultima X' man\u00e1 sin datos espec\u00edficos. Si dice 'borra TODAS', 'borra las dos', 'borra ambas', 'borra las 3', man\u00e1 \"cantidad\":\"todas\" en datos. 8) VIAJES: cuando el usuario dice 'X hizo Y km', 'el camion Z recorri\u00f3 Y km', 'Luis hizo 300km', usa registrar_viaje. Por defecto tipo='venta_propia'. Si dice 'flete' o 'a terceros' usa tipo='flete_terceros'. Pasa km como n\u00famero entero. Si menciona chofer pero no camion, dejas camion vacio (el bot busca el camion asignado al chofer). 9) FLETES: cuando el usuario dice 'le hice un flete a [empresa] por $X' o 'flete a Huico por 500mil', usa registrar_flete. El cliente es la empresa contratante, monto es la tarifa que vas a cobrar. 10) MARCAR FLETE COBRADO: cuando dice 'cobré el flete a X' o 'me pagaron el flete', usa marcar_flete_cobrado. 11) CONSULTAR BALANCE: cuando dice 'como viene el mes', 'cuanto gane', 'balance', 'cuanto factuté', usa consultar_balance. 12) CONSULTAR VENCIMIENTOS: cuando dice 'que vence', 'que tengo que pagar pronto', 'que se viene', 'cheques por cobrar', usa consultar_vencimientos. La cantidad de días por defecto es 30. Si dice 'esta semana' usa cantidad=7, si dice 'este mes' usa cantidad=30. 13) ELIMINAR VIAJE/FLETE: igual que las otras eliminaciones, usa eliminar_viaje o eliminar_flete según el contexto. 15) TRACTOR vs SEMIRREMOLQUE - MUY IMPORTANTE: Cada UC-XX es el TRACTOR (camion). El semirremolque es la cisterna que arrastra (codigo SR-XX). Tienen documentos SEPARADOS. CUANDO REGISTRES UN VENCIMIENTO: si el usuario dice expl\u00edcitamente 'del SEMI', 'del semirremolque', 'de la cisterna', 'del trailer', o si menciona tipo cisterna_adr, rta, o extintor, usa registrar_venc_semi (no registrar_venc_camion). Si dice 'del UC-01', 'del cami\u00f3n', 'del tractor' o no aclara, usa registrar_venc_camion. PARA REGISTRAR_VENC_SEMI: en datos pone 'semi' con el c\u00f3digo SR-XX. Si NO sabe el c\u00f3digo del semi pero sabe a qu\u00e9 cami\u00f3n est\u00e1 asignado (ej 'el semi del UC-01'), pasa camion='UC-01' Y semi vacio. PARA REGISTRAR_SEMI: cuando dice 'agreg\u00e1 un semi nuevo'. PARA ASIGNAR_SEMI: cuando dice 'asign\u00e1 el SR-02 al UC-03'. 14) CONSULTAR ARCHIVO: cuando dice 'mandame la VTV de UC-01', 'pasame la foto del seguro de UC-03', 'la cédula del 02', 'la foto del registro de Luis', 'fotos del camión 5', usa consultar_archivo. En 'datos' pone chofer o camion según corresponda, y categoria con el tipo de archivo si lo menciona (vtv, seguro, cedula, foto, registro, dni, art, factura, recibo, cheque, etc). TIPOS VENC CAMION (TRACTOR): vtv, seguro, habilitacion_cnrt, service, cedula. TIPOS VENC SEMI: vtv, seguro, cisterna_adr, extintor, rta, patente. TIPOS VENC CHOFER: registro_conducir, seguro_art, cargas_peligrosas_cnrt, psicofisico, conduccion_defensiva, libreta_sanitaria. Para choferes usa siempre el apellido. Responde siempre JSON puro sin markdown. Si el mensaje incluye UNA sola operación, devolvé UN objeto: {\"accion\":\"...\",\"datos\":{...},\"mensaje\":\"...\"}. Si el mensaje incluye VARIAS operaciones, devolvé un ARRAY de objetos. La estructura interna de cada objeto es exactamente: {\"accion\":\"nombre\",\"datos\":{\"litros\":0,\"precio_litro\":0,\"producto\":\"\",\"cliente\":\"\",\"proveedor\":\"\",\"camion\":\"\",\"semi\":\"\",\"chofer\":\"\",\"monto\":0,\"km\":0,\"origen\":\"\",\"destino\":\"\",\"tipo\":\"\",\"categoria\":\"\",\"forma_pago\":\"\",\"estado_pago\":\"\",\"cantidad\":\"\",\"mes\":0,\"anio\":0,\"fecha_vencimiento\":\"\",\"descripcion\":\"\"},\"mensaje\":\"\"}";
 
 // Cache de mapping camiones (se refresca cada 60 segundos para no consultar la BD en cada mensaje)
 var _camionesMappingCache = null;
@@ -86,12 +86,19 @@ async function getCamionesContext() {
     return _camionesMappingCache;
   }
   try {
-    var r = await db.from("camiones").select("codigo,patente,activo,choferes(nombre,apellido)").eq("activo", true).order("codigo");
+    var [r, rs] = await Promise.all([
+      db.from("camiones").select("codigo,patente,activo,choferes(nombre,apellido),semirremolques(codigo,patente)").eq("activo", true).order("codigo"),
+      db.from("semirremolques").select("codigo,patente,activo").eq("activo", true).order("codigo")
+    ]);
     var lista = (r.data || []).map(function(c) {
       var ch = c.choferes ? (c.choferes.nombre + " " + c.choferes.apellido) : "sin chofer";
-      return c.codigo + "=" + ch;
+      var semi = c.semirremolques ? (" semi=" + c.semirremolques.codigo) : " semi=ninguno";
+      return c.codigo + "=" + ch + semi;
     }).join(", ");
-    _camionesMappingCache = "CAMIONES (estado actual de la base de datos): " + (lista || "ninguno activo") + ".";
+    var listaSemis = (rs.data || []).map(function(s) {
+      return s.codigo + (s.patente ? " (" + s.patente + ")" : "");
+    }).join(", ");
+    _camionesMappingCache = "CAMIONES activos: " + (lista || "ninguno") + ". SEMIRREMOLQUES activos: " + (listaSemis || "ninguno") + ".";
     _camionesMappingTs = ahora;
     return _camionesMappingCache;
   } catch (e) {
@@ -286,9 +293,18 @@ async function run(accion,datos) {
       if (!cam) return {ok:false,msg:"No encontre el camion "+datos.camion};
       var fechaParsed = parseFecha(datos.fecha_vencimiento);
       if (!fechaParsed) return {ok:false,msg:"Fecha inválida. Mandá la fecha en formato DD/MM/AAAA (ej: 14/04/2027)"};
-      var e=await db.from("documentos_camiones").insert([{camion_id:cam.id,tipo:datos.tipo||"vtv",fecha_vencimiento:fechaParsed,notas:datos.descripcion||null}]);
+      var tipoVenc = datos.tipo || "vtv";
+      // Buscar si ya existe un vencimiento del mismo tipo (significa que es una renovación)
+      var prev = await db.from("documentos_camiones").select("id,fecha_vencimiento").eq("camion_id", cam.id).eq("tipo", tipoVenc);
+      var reemplazos = (prev.data || []).length;
+      if (reemplazos > 0) {
+        // Borrar el/los anteriores porque fue renovado
+        await db.from("documentos_camiones").delete().eq("camion_id", cam.id).eq("tipo", tipoVenc);
+      }
+      var e=await db.from("documentos_camiones").insert([{camion_id:cam.id,tipo:tipoVenc,fecha_vencimiento:fechaParsed,notas:datos.descripcion||null}]);
       if (e.error) return {ok:false,msg:e.error.message};
-      return {ok:true,msg:"✅ Vencimiento OK\n"+cam.codigo+" - "+(datos.tipo||"vtv")+"\nVence: "+fechaParsed};
+      var sufijo = reemplazos > 0 ? "\n♻️ Reemplazó "+reemplazos+" vencimiento"+(reemplazos>1?"s":"")+" anterior"+(reemplazos>1?"es":"") : "";
+      return {ok:true,msg:"✅ Vencimiento OK\n"+cam.codigo+" - "+tipoVenc+"\nVence: "+fechaParsed+sufijo};
     }
 
     if (accion==="registrar_venc_chofer") {
@@ -296,9 +312,82 @@ async function run(accion,datos) {
       if (!ch) return {ok:false,msg:"No encontre al chofer "+datos.chofer+". Usa el apellido exacto."};
       var fechaParsed = parseFecha(datos.fecha_vencimiento);
       if (!fechaParsed) return {ok:false,msg:"Fecha inválida. Mandá la fecha en formato DD/MM/AAAA (ej: 14/04/2027)"};
-      var e=await db.from("documentos_choferes").insert([{chofer_id:ch.id,tipo:datos.tipo||"registro_conducir",fecha_vencimiento:fechaParsed,notas:datos.descripcion||null}]);
+      var tipoVenc = datos.tipo || "registro_conducir";
+      // Buscar si ya existe un vencimiento del mismo tipo (renovación)
+      var prev = await db.from("documentos_choferes").select("id,fecha_vencimiento").eq("chofer_id", ch.id).eq("tipo", tipoVenc);
+      var reemplazos = (prev.data || []).length;
+      if (reemplazos > 0) {
+        await db.from("documentos_choferes").delete().eq("chofer_id", ch.id).eq("tipo", tipoVenc);
+      }
+      var e=await db.from("documentos_choferes").insert([{chofer_id:ch.id,tipo:tipoVenc,fecha_vencimiento:fechaParsed,notas:datos.descripcion||null}]);
       if (e.error) return {ok:false,msg:e.error.message};
-      return {ok:true,msg:"✅ Vencimiento OK\n"+ch.nombre+" "+ch.apellido+" - "+(datos.tipo||"registro_conducir")+"\nVence: "+fechaParsed};
+      var sufijo = reemplazos > 0 ? "\n♻️ Reemplazó "+reemplazos+" vencimiento"+(reemplazos>1?"s":"")+" anterior"+(reemplazos>1?"es":"") : "";
+      return {ok:true,msg:"✅ Vencimiento OK\n"+ch.nombre+" "+ch.apellido+" - "+tipoVenc+"\nVence: "+fechaParsed+sufijo};
+    }
+
+    // Helper: buscar semi por código o por camión asignado
+    async function findSemi(codigoSemi, codigoCamion) {
+      if (codigoSemi) {
+        var r = await db.from("semirremolques").select("id,codigo,patente").ilike("codigo", "%"+codigoSemi+"%").maybeSingle();
+        if (r.data) return r.data;
+      }
+      if (codigoCamion) {
+        var rc = await db.from("camiones").select("semirremolque_id,semirremolques(id,codigo,patente)").ilike("codigo", "%"+codigoCamion+"%").maybeSingle();
+        if (rc.data && rc.data.semirremolques) return rc.data.semirremolques;
+      }
+      return null;
+    }
+
+    if (accion==="registrar_venc_semi") {
+      var semi = await findSemi(datos.semi, datos.camion);
+      if (!semi) return {ok:false,msg:"No encontré el semi. Pasame el código SR-XX o decime de qué camión es."};
+      var fechaP = parseFecha(datos.fecha_vencimiento);
+      if (!fechaP) return {ok:false,msg:"Fecha inválida. Mandá la fecha en formato DD/MM/AAAA"};
+      var tipoVS = datos.tipo || "vtv";
+      // Renovación: borrar anterior del mismo tipo
+      var prevS = await db.from("documentos_semirremolques").select("id").eq("semirremolque_id", semi.id).eq("tipo", tipoVS);
+      var reemplS = (prevS.data || []).length;
+      if (reemplS > 0) {
+        await db.from("documentos_semirremolques").delete().eq("semirremolque_id", semi.id).eq("tipo", tipoVS);
+      }
+      var eS = await db.from("documentos_semirremolques").insert([{semirremolque_id:semi.id, tipo:tipoVS, fecha_vencimiento:fechaP, notas:datos.descripcion||null}]);
+      if (eS.error) return {ok:false,msg:eS.error.message};
+      var sufS = reemplS > 0 ? "\n♻️ Reemplazó "+reemplS+" vencimiento"+(reemplS>1?"s":"")+" anterior"+(reemplS>1?"es":"") : "";
+      return {ok:true,msg:"✅ Vencimiento OK\n🚚 "+semi.codigo+(semi.patente?" ("+semi.patente+")":"")+" - "+tipoVS+"\nVence: "+fechaP+sufS};
+    }
+
+    if (accion==="registrar_semi") {
+      if (!datos.codigo && !datos.semi) return {ok:false,msg:"Falta el código del semi (ej: SR-01)"};
+      var codigo = (datos.codigo || datos.semi).toUpperCase();
+      var ex = await db.from("semirremolques").select("id").eq("codigo", codigo).maybeSingle();
+      if (ex.data) return {ok:false,msg:"Ya existe un semi con código "+codigo};
+      var nuevo = {
+        codigo: codigo,
+        patente: datos.patente || null,
+        marca: datos.marca || null,
+        modelo: datos.modelo || null,
+        anio: datos.anio || null,
+        capacidad_litros: datos.capacidad_litros || null,
+        notas: datos.descripcion || null,
+        activo: true
+      };
+      var eN = await db.from("semirremolques").insert([nuevo]).select().maybeSingle();
+      if (eN.error) return {ok:false,msg:eN.error.message};
+      return {ok:true,msg:"✅ Semirremolque agregado\n🚚 "+codigo+(datos.patente?"\nPatente: "+datos.patente:"")+(datos.capacidad_litros?"\nCapacidad: "+Number(datos.capacidad_litros).toLocaleString('es-AR')+" L":"")};
+    }
+
+    if (accion==="asignar_semi") {
+      if (!datos.semi || !datos.camion) return {ok:false,msg:"Pasame el código del semi y del camión (ej: 'asigná el SR-02 al UC-03')"};
+      var semiA = await db.from("semirremolques").select("id,codigo").ilike("codigo","%"+datos.semi+"%").maybeSingle();
+      var camA = await db.from("camiones").select("id,codigo").ilike("codigo","%"+datos.camion+"%").maybeSingle();
+      if (!semiA.data) return {ok:false,msg:"No encontré el semi "+datos.semi};
+      if (!camA.data) return {ok:false,msg:"No encontré el camión "+datos.camion};
+      // 1) Sacarle el semi a cualquier camión que lo tuviera asignado
+      await db.from("camiones").update({semirremolque_id:null}).eq("semirremolque_id", semiA.data.id);
+      // 2) Asignarlo al camión elegido
+      var eA = await db.from("camiones").update({semirremolque_id:semiA.data.id}).eq("id", camA.data.id);
+      if (eA.error) return {ok:false,msg:eA.error.message};
+      return {ok:true,msg:"✅ Asignación OK\n🚚 "+semiA.data.codigo+" → 🚛 "+camA.data.codigo};
     }
 
     if (accion==="registrar_viaje") {
