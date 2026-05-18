@@ -301,8 +301,9 @@ async function run(accion,datos) {
         // Borrar el/los anteriores porque fue renovado
         await db.from("documentos_camiones").delete().eq("camion_id", cam.id).eq("tipo", tipoVenc);
       }
-      var e=await db.from("documentos_camiones").insert([{camion_id:cam.id,tipo:tipoVenc,fecha_vencimiento:fechaParsed,notas:datos.descripcion||null}]);
+      var e = await db.from("documentos_camiones").insert([{camion_id:cam.id,tipo:tipoVenc,fecha_vencimiento:fechaParsed,notas:datos.descripcion||null}]).select();
       if (e.error) return {ok:false,msg:e.error.message};
+      if (!e.data || e.data.length === 0) return {ok:false,msg:"❌ Insert falló silenciosamente en documentos_camiones"};
       var sufijo = reemplazos > 0 ? "\n♻️ Reemplazó "+reemplazos+" vencimiento"+(reemplazos>1?"s":"")+" anterior"+(reemplazos>1?"es":"") : "";
       return {ok:true,msg:"✅ Vencimiento OK\n"+cam.codigo+" - "+tipoVenc+"\nVence: "+fechaParsed+sufijo};
     }
@@ -313,14 +314,29 @@ async function run(accion,datos) {
       var fechaParsed = parseFecha(datos.fecha_vencimiento);
       if (!fechaParsed) return {ok:false,msg:"Fecha inválida. Mandá la fecha en formato DD/MM/AAAA (ej: 14/04/2027)"};
       var tipoVenc = datos.tipo || "registro_conducir";
+      console.log("[VENC_CHOFER] Chofer encontrado:", ch.nombre, ch.apellido, "id:", ch.id);
+      console.log("[VENC_CHOFER] Tipo:", tipoVenc, "Fecha:", fechaParsed);
       // Buscar si ya existe un vencimiento del mismo tipo (renovación)
       var prev = await db.from("documentos_choferes").select("id,fecha_vencimiento").eq("chofer_id", ch.id).eq("tipo", tipoVenc);
       var reemplazos = (prev.data || []).length;
+      console.log("[VENC_CHOFER] Anteriores encontrados:", reemplazos);
       if (reemplazos > 0) {
-        await db.from("documentos_choferes").delete().eq("chofer_id", ch.id).eq("tipo", tipoVenc);
+        var delRes = await db.from("documentos_choferes").delete().eq("chofer_id", ch.id).eq("tipo", tipoVenc);
+        console.log("[VENC_CHOFER] Delete result:", JSON.stringify(delRes));
       }
-      var e=await db.from("documentos_choferes").insert([{chofer_id:ch.id,tipo:tipoVenc,fecha_vencimiento:fechaParsed,notas:datos.descripcion||null}]);
-      if (e.error) return {ok:false,msg:e.error.message};
+      // Insert con .select() para forzar confirmación de que se insertó
+      var e = await db.from("documentos_choferes").insert([{chofer_id:ch.id,tipo:tipoVenc,fecha_vencimiento:fechaParsed,notas:datos.descripcion||null}]).select();
+      console.log("[VENC_CHOFER] Insert result:", JSON.stringify(e));
+      if (e.error) {
+        console.error("[VENC_CHOFER] ERROR:", e.error);
+        return {ok:false,msg:"Error guardando: "+e.error.message};
+      }
+      // Verificar que realmente se insertó
+      if (!e.data || e.data.length === 0) {
+        console.error("[VENC_CHOFER] FALLO SILENCIOSO: insert no devolvió datos");
+        return {ok:false,msg:"❌ El insert falló silenciosamente. Revisar logs de Render."};
+      }
+      console.log("[VENC_CHOFER] OK insertado con id:", e.data[0].id);
       var sufijo = reemplazos > 0 ? "\n♻️ Reemplazó "+reemplazos+" vencimiento"+(reemplazos>1?"s":"")+" anterior"+(reemplazos>1?"es":"") : "";
       return {ok:true,msg:"✅ Vencimiento OK\n"+ch.nombre+" "+ch.apellido+" - "+tipoVenc+"\nVence: "+fechaParsed+sufijo};
     }
@@ -350,8 +366,9 @@ async function run(accion,datos) {
       if (reemplS > 0) {
         await db.from("documentos_semirremolques").delete().eq("semirremolque_id", semi.id).eq("tipo", tipoVS);
       }
-      var eS = await db.from("documentos_semirremolques").insert([{semirremolque_id:semi.id, tipo:tipoVS, fecha_vencimiento:fechaP, notas:datos.descripcion||null}]);
+      var eS = await db.from("documentos_semirremolques").insert([{semirremolque_id:semi.id, tipo:tipoVS, fecha_vencimiento:fechaP, notas:datos.descripcion||null}]).select();
       if (eS.error) return {ok:false,msg:eS.error.message};
+      if (!eS.data || eS.data.length === 0) return {ok:false,msg:"❌ Insert falló silenciosamente en documentos_semirremolques"};
       var sufS = reemplS > 0 ? "\n♻️ Reemplazó "+reemplS+" vencimiento"+(reemplS>1?"s":"")+" anterior"+(reemplS>1?"es":"") : "";
       return {ok:true,msg:"✅ Vencimiento OK\n🚚 "+semi.codigo+(semi.patente?" ("+semi.patente+")":"")+" - "+tipoVS+"\nVence: "+fechaP+sufS};
     }
