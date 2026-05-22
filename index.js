@@ -11,7 +11,7 @@ var historiales = {};
 var window_ultimoVenc = {};
 
 // ── DIAGNÓSTICO DE ARRANQUE ──
-console.log("=== BOT v3.6 - SIN SUELDO + CISTERNADO CAMPO ===");
+console.log("=== BOT v3.7 - DNI EN CONSULTA CHOFER ===");
 console.log("Node:", process.version);
 console.log("Tiene fetch global:", typeof fetch !== "undefined");
 console.log("SUPABASE_URL configurado:", !!process.env.SUPABASE_URL);
@@ -185,11 +185,11 @@ async function findChofer(valor) {
   var v = norm(valor);
   if (!v) return null;
   // buscar amplio
-  var r = await db.from("choferes").select("id,nombre,apellido,sueldo_fijo,variable_por_km,variable_por_viaje").or("apellido.ilike.%"+valor+"%,nombre.ilike.%"+valor+"%").limit(10);
+  var r = await db.from("choferes").select("*").or("apellido.ilike.%"+valor+"%,nombre.ilike.%"+valor+"%").limit(10);
   var lista = (r.data && r.data.length) ? r.data : [];
   // si no encontró nada, traer todos y filtrar a mano (por si hay tildes)
   if (!lista.length) {
-    var todos = await db.from("choferes").select("id,nombre,apellido,sueldo_fijo,variable_por_km,variable_por_viaje");
+    var todos = await db.from("choferes").select("*");
     lista = (todos.data||[]).filter(function(c){
       var n = norm(c.nombre), a = norm(c.apellido);
       return n.includes(v) || a.includes(v) || v.includes(n) || v.includes(a);
