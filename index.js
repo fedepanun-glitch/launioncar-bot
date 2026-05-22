@@ -11,7 +11,7 @@ var historiales = {};
 var window_ultimoVenc = {};
 
 // ── DIAGNÓSTICO DE ARRANQUE ──
-console.log("=== BOT v3.5 - CISTERNADO DESDE NOTAS ===");
+console.log("=== BOT v3.6 - SIN SUELDO + CISTERNADO CAMPO ===");
 console.log("Node:", process.version);
 console.log("Tiene fetch global:", typeof fetch !== "undefined");
 console.log("SUPABASE_URL configurado:", !!process.env.SUPABASE_URL);
@@ -346,15 +346,13 @@ async function run(accion,datos,contextFrom) {
       if (semi) {
         lineas.push("🚚 Semi: "+semi.codigo+(semi.patente?" ("+semi.patente+")":""));
         if (semi.marca || semi.modelo) lineas.push("Marca/Modelo: "+[semi.marca,semi.modelo].filter(Boolean).join(" "));
-        // Cisternado: está en notas (o en campo cisternado/compartimentos si existiera)
-        var cist = semi.cisternado || semi.compartimentos || semi.notas || null;
+        // Cisternado: SOLO del campo dedicado (notas suele tener datos repetidos)
+        var cist = semi.cisternado || semi.compartimentos || null;
         if (cist) lineas.push("Cisternado: "+cist);
         if (semi.capacidad_litros) lineas.push("Capacidad total: "+Number(semi.capacidad_litros).toLocaleString("es-AR")+" L");
       } else {
         lineas.push("🚚 Semi: sin asignar");
       }
-      // Datos de sueldo si los tiene
-      if (ch.sueldo_fijo) lineas.push("💰 Sueldo fijo: "+fmt(ch.sueldo_fijo));
       return {ok:true,msg:lineas.join("\n")};
     }
 
