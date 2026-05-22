@@ -11,7 +11,7 @@ var historiales = {};
 var window_ultimoVenc = {};
 
 // ── DIAGNÓSTICO DE ARRANQUE ──
-console.log("=== BOT v3.7 - DNI EN CONSULTA CHOFER ===");
+console.log("=== BOT v3.8 - FIX PATENTE TRACTOR vs SEMI ===");
 console.log("Node:", process.version);
 console.log("Tiene fetch global:", typeof fetch !== "undefined");
 console.log("SUPABASE_URL configurado:", !!process.env.SUPABASE_URL);
@@ -330,7 +330,7 @@ async function run(accion,datos,contextFrom) {
       var ch=await findChofer(datos.chofer);
       if (!ch) return {ok:false,msg:"No encontre al chofer "+datos.chofer+". Usá el apellido."};
       // Buscar el camión que maneja + su semi asignado
-      var camR = await db.from("camiones").select("*,semirremolques(*)").eq("chofer_id", ch.id).maybeSingle();
+      var camR = await db.from("camiones").select("id,codigo,patente,marca,modelo,semirremolque_id,semirremolques(id,codigo,patente,marca,modelo,anio,capacidad_litros,cisternado,notas)").eq("chofer_id", ch.id).maybeSingle();
       var cam = camR.data;
       var semi = cam && cam.semirremolques ? cam.semirremolques : null;
       var lineas = [];
