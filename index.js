@@ -19,7 +19,7 @@ var historiales = {};
 var window_ultimoVenc = {};
 
 // ── DIAGNÓSTICO DE ARRANQUE ──
-console.log("=== BOT v4.3 - ENDPOINT FLOTA ===");
+console.log("=== BOT v4.5 - ODOMETROS DIARIOS AUTO ===");
 console.log("Node:", process.version);
 console.log("Tiene fetch global:", typeof fetch !== "undefined");
 console.log("SUPABASE_URL configurado:", !!process.env.SUPABASE_URL);
@@ -1064,37 +1064,128 @@ function extraerJSON(texto) {
   try { return JSON.parse(t.substring(inicio, fin+1)); } catch(e) { return null; }
 }
 
+// FASE 4: Sincronización nocturna de odómetros desde Sitrack
+// Guarda el odómetro de cada camión y crea viajes automáticos con los km recorridos
+app.get("/cron/odometros", async function(req, res) {
+  if (req.query.key !== process.env.CRON_KEY) {
+    return res.status(401).json({ok:false, error:"Unauthorized"});
+  }
+  try {
+    var hoy = new Date().toISOString().split("T")[0];
+    var ayer = new Date(Date.now() - 24*60*60*1000).toISOString().split("T")[0];
+    var rCam = await db.from("camiones").select("id,codigo,patente,chofer_id,choferes(id,nombre,apellido)").order("codigo");
+    var camiones = rCam.data || [];
+    var resumen = [];
+    var totalKm = 0;
+    for (var i=0; i<camiones.length; i++) {
+      var c = camiones[i];
+      if (!c.patente) { resumen.push({camion:c.codigo, status:"skip", motivo:"sin patente"}); continue; }
+      var rS = await consultarUbicacionSitrack(c.patente);
+      if (!rS.ok) { resumen.push({camion:c.codigo, status:"error", motivo:rS.error}); continue; }
+      var report = rS.data;
+      if (Array.isArray(report)) report = report[0];
+      if (report && report.reports && Array.isArray(report.reports)) report = report.reports[0];
+      if (!report) { resumen.push({camion:c.codigo, status:"error", motivo:"Sin datos GPS"}); continue; }
+      var odometro = report.odometer || report.odometro || report.km;
+      if (!odometro) { resumen.push({camion:c.codigo, status:"error", motivo:"Sin odómetro en respuesta"}); continue; }
+      odometro = Number(odometro);
+      // Guardar odómetro de hoy (upsert)
+      await db.from("odometros_diarios").upsert({camion_id:c.id, fecha:hoy, odometro_km:odometro}, {onConflict:"camion_id,fecha"});
+      // Buscar odómetro de ayer
+      var rAyer = await db.from("odometros_diarios").select("odometro_km").eq("camion_id",c.id).eq("fecha",ayer).maybeSingle();
+      if (rAyer.data && rAyer.data.odometro_km) {
+        var diff = Math.round(odometro - Number(rAyer.data.odometro_km));
+        if (diff > 0 && diff < 2000) {
+          // Crear viaje automatico SI el chofer esta asignado
+          var insViaje = null;
+          if (c.chofer_id) {
+            insViaje = await db.from("viajes").insert([{
+              camion_id: c.id,
+              chofer_id: c.chofer_id,
+              fecha: hoy,
+              km: diff,
+              tipo: "venta_propia",
+              origen: "Sitrack",
+              destino: "Auto",
+              observaciones: "Auto-cargado desde Sitrack. Odómetro: " + odometro + " km"
+            }]).select();
+          }
+          if (insViaje && insViaje.data && insViaje.data[0]) {
+            await db.from("odometros_diarios").update({viaje_id:insViaje.data[0].id, km_recorridos:diff}).eq("camion_id",c.id).eq("fecha",hoy);
+          } else {
+            await db.from("odometros_diarios").update({km_recorridos:diff}).eq("camion_id",c.id).eq("fecha",hoy);
+          }
+          totalKm += diff;
+          resumen.push({camion:c.codigo, chofer: c.choferes?c.choferes.apellido:"-", status:"ok", km:diff, odometro:odometro});
+        } else if (diff === 0) {
+          resumen.push({camion:c.codigo, status:"sin_movimiento", odometro:odometro});
+        } else if (diff < 0) {
+          resumen.push({camion:c.codigo, status:"error", motivo:"Odómetro menor a ayer ("+diff+")", odometro:odometro});
+        } else {
+          resumen.push({camion:c.codigo, status:"error", motivo:"Diff demasiado grande ("+diff+" km)", odometro:odometro});
+        }
+      } else {
+        resumen.push({camion:c.codigo, status:"primera_carga", odometro:odometro});
+      }
+    }
+    // Mandar resumen por WhatsApp
+    var msg = "📊 *Resumen Sitrack — " + hoy + "*\n\n";
+    resumen.forEach(function(r) {
+      if (r.status === "ok") msg += "🚛 " + r.camion + " (" + (r.chofer||"-") + "): " + r.km + " km\n";
+      else if (r.status === "sin_movimiento") msg += "⏸️ " + r.camion + ": sin movimiento\n";
+      else if (r.status === "primera_carga") msg += "🆕 " + r.camion + ": primera carga (od. " + r.odometro + ")\n";
+      else if (r.status === "skip") msg += "⏭️ " + r.camion + ": " + r.motivo + "\n";
+      else msg += "⚠️ " + r.camion + ": " + (r.motivo||"error") + "\n";
+    });
+    msg += "\n📈 *Total flota: " + totalKm + " km*";
+    if (process.env.FEDE_WHATSAPP && totalKm > 0) {
+      try {
+        await twilioClient.messages.create({
+          from: process.env.TWILIO_WHATSAPP_NUMBER,
+          to: process.env.FEDE_WHATSAPP,
+          body: msg
+        });
+      } catch(e) { console.error("[/cron/odometros] Error WhatsApp:", e.message); }
+    }
+    res.json({ok:true, fecha:hoy, totalKm:totalKm, resumen:resumen, mensaje:msg});
+  } catch (e) {
+    console.error("[/cron/odometros] Error:", e.message);
+    res.status(500).json({ok:false, error:e.message});
+  }
+});
+
 // Endpoint para que la app web consulte la ubicación GPS de TODOS los camiones de la flota
+// Consultamos camión por camión a Sitrack usando ?assetId=PATENTE (es lo que sabemos que funciona)
 app.get("/api/flota", async function(req, res) {
   try {
-    // Consulta a Sitrack SIN parametros = devuelve todos los vehiculos de la cuenta
-    var rS = await consultarUbicacionSitrack(null);
-    if (!rS.ok) return res.status(500).json({ok:false, error:rS.error});
-    // Traer los camiones de la base para cruzar con la respuesta de Sitrack
-    var rCam = await db.from("camiones").select("id,codigo,patente,marca,modelo,chofer_id,choferes(id,nombre,apellido)");
+    var rCam = await db.from("camiones").select("id,codigo,patente,marca,modelo,chofer_id,choferes(id,nombre,apellido)").order("codigo");
     var camiones = rCam.data || [];
-    // Normalizar respuesta de Sitrack: puede ser array o objeto con .reports
-    var reports = [];
-    if (Array.isArray(rS.data)) reports = rS.data;
-    else if (rS.data && Array.isArray(rS.data.reports)) reports = rS.data.reports;
-    else if (rS.data && typeof rS.data === "object") reports = [rS.data];
-    // Armar respuesta cruzando: cada camion de la base, con su reporte si lo encuentra por patente
-    var resultado = camiones.map(function(c) {
-      var r = reports.find(function(rep) {
-        var assetId = rep.assetId || rep.patente || rep.plate || rep.dominio;
-        return assetId && c.patente && String(assetId).toUpperCase() === String(c.patente).toUpperCase();
-      });
+    // Consultar a Sitrack en paralelo, una request por camión
+    var resultados = await Promise.all(camiones.map(async function(c) {
       var ubicacion = null;
-      if (r) {
-        ubicacion = {
-          lat: r.lat || r.latitude || r.latitud || (r.position && r.position.lat),
-          lng: r.lng || r.lon || r.longitude || r.longitud || (r.position && r.position.lng),
-          speed: r.speed || r.velocidad || r.velocity || null,
-          address: r.address || r.direccion || r.location || r.formattedAddress || null,
-          datetime: r.datetime || r.date || r.fecha || r.timestamp || r.reportDate || null,
-          odometer: r.odometer || r.odometro || r.km || null,
-          ignition: r.ignition || r.encendido || null
-        };
+      var error = null;
+      if (c.patente) {
+        var rS = await consultarUbicacionSitrack(c.patente);
+        if (rS.ok && rS.data) {
+          var r = rS.data;
+          if (Array.isArray(r)) r = r[0];
+          if (r && r.reports && Array.isArray(r.reports)) r = r.reports[0];
+          if (r) {
+            ubicacion = {
+              lat: r.lat || r.latitude || r.latitud || (r.position && r.position.lat) || null,
+              lng: r.lng || r.lon || r.longitude || r.longitud || (r.position && r.position.lng) || null,
+              speed: (r.speed!==undefined?r.speed:(r.velocidad!==undefined?r.velocidad:(r.velocity!==undefined?r.velocity:null))),
+              address: r.address || r.direccion || r.location || r.formattedAddress || null,
+              datetime: r.datetime || r.date || r.fecha || r.timestamp || r.reportDate || null,
+              odometer: (r.odometer!==undefined?r.odometer:(r.odometro!==undefined?r.odometro:(r.km!==undefined?r.km:null))),
+              ignition: (r.ignition!==undefined?r.ignition:(r.encendido!==undefined?r.encendido:null))
+            };
+          }
+        } else if (!rS.ok) {
+          error = rS.error;
+        }
+      } else {
+        error = "Sin patente cargada";
       }
       return {
         camion: c.codigo,
@@ -1102,10 +1193,11 @@ app.get("/api/flota", async function(req, res) {
         marca: c.marca,
         modelo: c.modelo,
         chofer: c.choferes ? (c.choferes.apellido + ", " + c.choferes.nombre) : null,
-        ubicacion: ubicacion
+        ubicacion: ubicacion,
+        error: error
       };
-    });
-    res.json({ok:true, flota:resultado, timestamp: new Date().toISOString()});
+    }));
+    res.json({ok:true, flota:resultados, timestamp: new Date().toISOString()});
   } catch (e) {
     console.error("[/api/flota] Error:", e.message);
     res.status(500).json({ok:false, error:e.message});
