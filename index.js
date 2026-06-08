@@ -4,6 +4,14 @@ var twilio = require("twilio");
 var app = express();
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
+// CORS para que la app (Netlify) pueda consultar este bot
+app.use(function(req, res, next) {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.header("Access-Control-Allow-Headers", "Content-Type");
+  if (req.method === "OPTIONS") return res.sendStatus(200);
+  next();
+});
 var db = supabase.createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 var twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 var historiales = {};
@@ -11,7 +19,7 @@ var historiales = {};
 var window_ultimoVenc = {};
 
 // ── DIAGNÓSTICO DE ARRANQUE ──
-console.log("=== BOT v4.2 - SITRACK POR NOMBRE CHOFER ===");
+console.log("=== BOT v4.3 - ENDPOINT FLOTA ===");
 console.log("Node:", process.version);
 console.log("Tiene fetch global:", typeof fetch !== "undefined");
 console.log("SUPABASE_URL configurado:", !!process.env.SUPABASE_URL);
@@ -1055,6 +1063,54 @@ function extraerJSON(texto) {
   if (fin===-1) return null;
   try { return JSON.parse(t.substring(inicio, fin+1)); } catch(e) { return null; }
 }
+
+// Endpoint para que la app web consulte la ubicación GPS de TODOS los camiones de la flota
+app.get("/api/flota", async function(req, res) {
+  try {
+    // Consulta a Sitrack SIN parametros = devuelve todos los vehiculos de la cuenta
+    var rS = await consultarUbicacionSitrack(null);
+    if (!rS.ok) return res.status(500).json({ok:false, error:rS.error});
+    // Traer los camiones de la base para cruzar con la respuesta de Sitrack
+    var rCam = await db.from("camiones").select("id,codigo,patente,marca,modelo,chofer_id,choferes(id,nombre,apellido)");
+    var camiones = rCam.data || [];
+    // Normalizar respuesta de Sitrack: puede ser array o objeto con .reports
+    var reports = [];
+    if (Array.isArray(rS.data)) reports = rS.data;
+    else if (rS.data && Array.isArray(rS.data.reports)) reports = rS.data.reports;
+    else if (rS.data && typeof rS.data === "object") reports = [rS.data];
+    // Armar respuesta cruzando: cada camion de la base, con su reporte si lo encuentra por patente
+    var resultado = camiones.map(function(c) {
+      var r = reports.find(function(rep) {
+        var assetId = rep.assetId || rep.patente || rep.plate || rep.dominio;
+        return assetId && c.patente && String(assetId).toUpperCase() === String(c.patente).toUpperCase();
+      });
+      var ubicacion = null;
+      if (r) {
+        ubicacion = {
+          lat: r.lat || r.latitude || r.latitud || (r.position && r.position.lat),
+          lng: r.lng || r.lon || r.longitude || r.longitud || (r.position && r.position.lng),
+          speed: r.speed || r.velocidad || r.velocity || null,
+          address: r.address || r.direccion || r.location || r.formattedAddress || null,
+          datetime: r.datetime || r.date || r.fecha || r.timestamp || r.reportDate || null,
+          odometer: r.odometer || r.odometro || r.km || null,
+          ignition: r.ignition || r.encendido || null
+        };
+      }
+      return {
+        camion: c.codigo,
+        patente: c.patente,
+        marca: c.marca,
+        modelo: c.modelo,
+        chofer: c.choferes ? (c.choferes.apellido + ", " + c.choferes.nombre) : null,
+        ubicacion: ubicacion
+      };
+    });
+    res.json({ok:true, flota:resultado, timestamp: new Date().toISOString()});
+  } catch (e) {
+    console.error("[/api/flota] Error:", e.message);
+    res.status(500).json({ok:false, error:e.message});
+  }
+});
 
 app.post("/webhook",async function(req,res){
   var from=req.body.From;
