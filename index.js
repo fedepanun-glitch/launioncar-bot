@@ -21,7 +21,7 @@ var window_ultimoVenc = {};
 var window_pendiente = {};
 
 // ── DIAGNÓSTICO DE ARRANQUE ──
-console.log("=== BOT v4.9 - KM TIEMPO REAL ===");
+console.log("=== BOT v5.0 - DIAGNOSTICO SITRACK (trim + log largo + error detallado) ===");
 console.log("Node:", process.version);
 console.log("Tiene fetch global:", typeof fetch !== "undefined");
 console.log("SUPABASE_URL configurado:", !!process.env.SUPABASE_URL);
@@ -70,7 +70,10 @@ async function consultarUbicacionSitrack(patente) {
   if (!process.env.SITRACK_USER || !process.env.SITRACK_PASS) {
     return {ok:false, error:"Credenciales Sitrack no configuradas en Render (faltan SITRACK_USER o SITRACK_PASS)"};
   }
-  var auth = "Basic " + Buffer.from(process.env.SITRACK_USER+":"+process.env.SITRACK_PASS).toString("base64");
+  var sUser = process.env.SITRACK_USER.trim();
+  var sPass = process.env.SITRACK_PASS.trim();
+  console.log("[SITRACK] user len:", sUser.length, "pass len:", sPass.length, "user:", sUser);
+  var auth = "Basic " + Buffer.from(sUser+":"+sPass).toString("base64");
   var url = "https://externalappgw.ar.sitrack.com/v2/report" + (patente ? "?assetId="+encodeURIComponent(patente) : "");
   console.log("[SITRACK] Consultando:", url);
   try {
@@ -82,7 +85,7 @@ async function consultarUbicacionSitrack(patente) {
     console.log("[SITRACK] Status:", resp.status);
     console.log("[SITRACK] Respuesta:", txt.substring(0, 500));
     if (resp.status === 401 || resp.status === 403) {
-      return {ok:false, error:"Credenciales rechazadas por Sitrack (verificar usuario/contraseña en Render)"};
+      return {ok:false, error:"Credenciales rechazadas por Sitrack (HTTP "+resp.status+"). Sitrack respondio: "+txt.substring(0,150)};
     }
     if (resp.status !== 200) {
       return {ok:false, error:"Sitrack devolvió HTTP "+resp.status};
