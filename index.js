@@ -21,7 +21,7 @@ var window_ultimoVenc = {};
 var window_pendiente = {};
 
 // ── DIAGNÓSTICO DE ARRANQUE ──
-console.log("=== BOT v4.8 - KM CHOFER + TZ AR ===");
+console.log("=== BOT v4.9 - KM TIEMPO REAL ===");
 console.log("Node:", process.version);
 console.log("Tiene fetch global:", typeof fetch !== "undefined");
 console.log("SUPABASE_URL configurado:", !!process.env.SUPABASE_URL);
@@ -1165,54 +1165,107 @@ app.get("/cron/odometros", async function(req, res) {
       var odometro = report.odometer || report.odometro || report.km;
       if (!odometro) { resumen.push({camion:c.codigo, status:"error", motivo:"Sin odómetro en respuesta"}); continue; }
       odometro = Number(odometro);
-      // Guardar odómetro de hoy (upsert)
-      var rUp = await db.from("odometros_diarios").upsert({camion_id:c.id, fecha:hoy, odometro_km:odometro}, {onConflict:"camion_id,fecha"});
-      if (rUp.error) {
-        console.error("[CRON ODO] Error upsert:", rUp.error.message);
-        resumen.push({camion:c.codigo, status:"error", motivo:"DB: "+rUp.error.message});
-        continue;
-      }
-      // Buscar el ÚLTIMO odometro previo (no necesariamente "ayer exacto")
-      var rPrev = await db.from("odometros_diarios").select("odometro_km, fecha").eq("camion_id",c.id).lt("fecha",hoy).order("fecha",{ascending:false}).limit(1).maybeSingle();
-      if (rPrev.data && rPrev.data.odometro_km) {
-        var diff = Math.round(odometro - Number(rPrev.data.odometro_km));
-        var diasEntreLecturas = Math.max(1, Math.round((new Date(hoy) - new Date(rPrev.data.fecha))/(1000*60*60*24)));
-        // El umbral max es 2000 km/dia
-        if (diff > 0 && diff < 2000 * diasEntreLecturas) {
-          var insViaje = null;
-          if (c.chofer_id) {
-            insViaje = await db.from("viajes").insert([{
-              camion_id: c.id,
-              chofer_id: c.chofer_id,
-              fecha: hoy,
+      // Guardar/actualizar odómetro de hoy con lógica de tiempo real
+      var rHoy = await db.from("odometros_diarios").select("*").eq("camion_id",c.id).eq("fecha",hoy).maybeSingle();
+      var diff = 0;
+      var motivoFinal = null;
+      var statusFinal = null;
+      if (rHoy.data) {
+        // YA hay registro de hoy → estamos sincronizando por segunda+ vez en el día
+        var odoInicial = Number(rHoy.data.odometro_inicial_dia || rHoy.data.odometro_km);
+        diff = Math.max(0, Math.round(odometro - odoInicial));
+        await db.from("odometros_diarios").update({
+          odometro_km: odometro,
+          km_recorridos: diff,
+          ultima_actualizacion: new Date().toISOString()
+        }).eq("id", rHoy.data.id);
+        // Actualizar viaje existente o crear uno nuevo
+        if (rHoy.data.viaje_id) {
+          if (diff > 0) {
+            await db.from("viajes").update({
               km: diff,
-              tipo: "venta_propia",
-              origen: "Sitrack",
-              destino: "Auto",
-              observaciones: "Auto-cargado desde Sitrack. Odómetro: " + odometro + " km (anterior " + rPrev.data.fecha + ": " + rPrev.data.odometro_km + ")"
-            }]).select();
+              observaciones: "Auto-cargado desde Sitrack. Odómetro: " + odometro + " km (inicial dia: " + odoInicial + ")"
+            }).eq("id", rHoy.data.viaje_id);
           }
-          if (insViaje && insViaje.data && insViaje.data[0]) {
-            await db.from("odometros_diarios").update({viaje_id:insViaje.data[0].id, km_recorridos:diff}).eq("camion_id",c.id).eq("fecha",hoy);
-          } else {
-            await db.from("odometros_diarios").update({km_recorridos:diff}).eq("camion_id",c.id).eq("fecha",hoy);
+        } else if (diff > 0 && c.chofer_id) {
+          var insV = await db.from("viajes").insert([{
+            camion_id: c.id,
+            chofer_id: c.chofer_id,
+            fecha: hoy,
+            km: diff,
+            tipo: "venta_propia",
+            origen: "Sitrack",
+            destino: "Auto",
+            observaciones: "Auto-cargado desde Sitrack. Odómetro: " + odometro + " km"
+          }]).select();
+          if (insV.data && insV.data[0]) {
+            await db.from("odometros_diarios").update({viaje_id: insV.data[0].id}).eq("id", rHoy.data.id);
           }
-          totalKm += diff;
-          resumen.push({camion:c.codigo, chofer: c.choferes?c.choferes.apellido:"-", status:"ok", km:diff, odometro:odometro, dias:diasEntreLecturas});
-        } else if (diff === 0) {
-          resumen.push({camion:c.codigo, status:"sin_movimiento", odometro:odometro});
-        } else if (diff < 0) {
-          resumen.push({camion:c.codigo, status:"error", motivo:"Odómetro menor que el anterior ("+diff+")", odometro:odometro});
-        } else {
-          resumen.push({camion:c.codigo, status:"error", motivo:"Diff demasiado grande ("+diff+" km en "+diasEntreLecturas+" dia/s)", odometro:odometro});
         }
+        statusFinal = "ok_update";
       } else {
-        resumen.push({camion:c.codigo, status:"primera_carga", odometro:odometro});
+        // PRIMERA sincro del dia → calcular inicial = ultimo cierre anterior
+        var rPrev = await db.from("odometros_diarios").select("odometro_km, fecha").eq("camion_id",c.id).lt("fecha",hoy).order("fecha",{ascending:false}).limit(1).maybeSingle();
+        var odoInicial2 = odometro; // por defecto, si no hay anterior
+        if (rPrev.data && rPrev.data.odometro_km) {
+          odoInicial2 = Number(rPrev.data.odometro_km);
+          diff = Math.round(odometro - odoInicial2);
+        }
+        // Validaciones
+        if (diff < 0) {
+          resumen.push({camion:c.codigo, status:"error", motivo:"Odómetro menor que cierre anterior ("+diff+")", odometro:odometro});
+          continue;
+        }
+        if (diff > 5000) {
+          resumen.push({camion:c.codigo, status:"error", motivo:"Diff demasiado grande ("+diff+" km)", odometro:odometro});
+          continue;
+        }
+        // Insertar registro del dia
+        var insOdo = await db.from("odometros_diarios").insert([{
+          camion_id: c.id,
+          fecha: hoy,
+          odometro_km: odometro,
+          odometro_inicial_dia: odoInicial2,
+          km_recorridos: diff,
+          ultima_actualizacion: new Date().toISOString()
+        }]).select();
+        if (insOdo.error) {
+          console.error("[CRON ODO] Error insert:", insOdo.error.message);
+          resumen.push({camion:c.codigo, status:"error", motivo:"DB: "+insOdo.error.message});
+          continue;
+        }
+        // Crear viaje si hubo movimiento y hay chofer
+        if (diff > 0 && c.chofer_id && insOdo.data && insOdo.data[0]) {
+          var insV2 = await db.from("viajes").insert([{
+            camion_id: c.id,
+            chofer_id: c.chofer_id,
+            fecha: hoy,
+            km: diff,
+            tipo: "venta_propia",
+            origen: "Sitrack",
+            destino: "Auto",
+            observaciones: "Auto-cargado desde Sitrack. Odómetro: " + odometro + " km (inicial " + odoInicial2 + ")"
+          }]).select();
+          if (insV2.data && insV2.data[0]) {
+            await db.from("odometros_diarios").update({viaje_id: insV2.data[0].id}).eq("id", insOdo.data[0].id);
+          }
+          statusFinal = "ok";
+        } else if (diff === 0 && rPrev.data) {
+          statusFinal = "sin_movimiento";
+        } else {
+          statusFinal = "primera_carga";
+        }
+      }
+      if (statusFinal === "ok" || statusFinal === "ok_update") {
+        totalKm += diff;
+        resumen.push({camion:c.codigo, chofer: c.choferes?c.choferes.apellido:"-", status:statusFinal, km:diff, odometro:odometro});
+      } else {
+        resumen.push({camion:c.codigo, status:statusFinal, odometro:odometro});
       }
     }
     var msg = "📊 *Resumen Sitrack — " + hoy + "*\n\n";
     resumen.forEach(function(r) {
-      if (r.status === "ok") msg += "🚛 " + r.camion + " (" + (r.chofer||"-") + "): " + r.km + " km" + (r.dias>1?" ("+r.dias+" días)":"") + "\n";
+      if (r.status === "ok" || r.status === "ok_update") msg += "🚛 " + r.camion + " (" + (r.chofer||"-") + "): " + r.km + " km" + (r.status==="ok_update"?" (actualizado)":"") + "\n";
       else if (r.status === "sin_movimiento") msg += "⏸️ " + r.camion + ": sin movimiento\n";
       else if (r.status === "primera_carga") msg += "🆕 " + r.camion + ": primera carga (od. " + r.odometro + ")\n";
       else if (r.status === "skip") msg += "⏭️ " + r.camion + ": " + r.motivo + "\n";
