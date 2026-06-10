@@ -17,9 +17,11 @@ var twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUT
 var historiales = {};
 // Último vencimiento cargado por cada usuario (para adjuntar archivos al siguiente mensaje)
 var window_ultimoVenc = {};
+// Acciones pendientes de confirmación (modo "previsualizar antes de cargar")
+var window_pendiente = {};
 
 // ── DIAGNÓSTICO DE ARRANQUE ──
-console.log("=== BOT v4.6 - DELAY SITRACK + DNI VENC ===");
+console.log("=== BOT v4.7 - CONFIRMAR ANTES DE GUARDAR ===");
 console.log("Node:", process.version);
 console.log("Tiene fetch global:", typeof fetch !== "undefined");
 console.log("SUPABASE_URL configurado:", !!process.env.SUPABASE_URL);
@@ -1211,6 +1213,55 @@ app.get("/api/flota", async function(req, res) {
   }
 });
 
+// ── SISTEMA DE CONFIRMACIÓN ANTES DE GUARDAR ────────────────────
+// Lista de acciones que ESCRIBEN en la base (requieren confirmación)
+var ACCIONES_ESCRITURA = ["registrar_compra","registrar_venta","registrar_cobro","registrar_gasto","registrar_entrega","registrar_sueldo","registrar_viaje","registrar_flete","registrar_venc_camion","registrar_venc_chofer","registrar_venc_semi","registrar_semi","asignar_semi","marcar_flete_cobrado","eliminar_compra","eliminar_venta","eliminar_gasto","eliminar_entrega","eliminar_cobro","eliminar_viaje","eliminar_flete"];
+
+function esAccionEscritura(accion) {
+  return ACCIONES_ESCRITURA.indexOf(accion) !== -1;
+}
+
+function fmtMonto(n) {
+  if (!n && n !== 0) return "";
+  return "$" + Number(n).toLocaleString("es-AR");
+}
+
+// Arma un texto humano describiendo lo que se va a hacer (antes de confirmar)
+function describirOperacion(accion, datos) {
+  var d = datos || {};
+  switch(accion) {
+    case "registrar_compra": return "🛒 *Compra* de " + (d.litros?d.litros+"L de ":"") + (d.producto||"combustible") + (d.proveedor?" a "+d.proveedor:"") + (d.monto?" por "+fmtMonto(d.monto):(d.precio_litro?" a "+fmtMonto(d.precio_litro)+"/L":"")) + (d.estado_pago==="pagada"?" (pagada)":" (pendiente)") + (d.fecha?" - fecha "+d.fecha:"");
+    case "registrar_venta": return "💰 *Venta* de " + (d.litros?d.litros+"L de ":"") + (d.producto||"combustible") + (d.cliente?" a "+d.cliente:"") + (d.precio_litro?" a "+fmtMonto(d.precio_litro)+"/L":"") + (d.forma_pago?" - pago "+d.forma_pago:"") + (d.fecha?" - fecha "+d.fecha:"");
+    case "registrar_cobro": return "💵 *Cobro* de " + fmtMonto(d.monto) + (d.cliente?" de "+d.cliente:"") + (d.tipo?" en "+d.tipo:"") + (d.fecha?" - fecha "+d.fecha:"");
+    case "registrar_gasto": return "🔧 *Gasto* de " + fmtMonto(d.monto) + (d.categoria?" ("+d.categoria+")":"") + (d.camion?" del "+d.camion:"") + (d.chofer?" - rendido por "+d.chofer:" (sin chofer)") + (d.fecha?" - fecha "+d.fecha:"");
+    case "registrar_entrega": return "💸 *Entrega* de " + fmtMonto(d.monto) + (d.chofer?" a "+d.chofer:"") + (d.categoria?" ("+d.categoria+")":"") + (d.fecha?" - fecha "+d.fecha:"");
+    case "registrar_sueldo": return "👷 *Liquidación de sueldo* a " + (d.chofer||"") + " por " + fmtMonto(d.monto);
+    case "registrar_viaje": return "🛣️ *Viaje* de " + (d.km||0) + " km " + (d.chofer?"de "+d.chofer:"") + (d.camion?" en "+d.camion:"") + (d.origen?" desde "+d.origen:"") + (d.destino?" hasta "+d.destino:"");
+    case "registrar_flete": return "📦 *Flete* a " + (d.cliente||"") + " por " + fmtMonto(d.monto);
+    case "registrar_venc_camion": return "📅 *Vencimiento* (camión) - " + (d.tipo||"VTV") + " del " + (d.camion||"") + " vence " + (d.fecha_vencimiento||"");
+    case "registrar_venc_chofer": return "📅 *Vencimiento* (chofer) - " + (d.tipo||"registro") + " de " + (d.chofer||"") + " vence " + (d.fecha_vencimiento||"");
+    case "registrar_venc_semi": return "📅 *Vencimiento* (semi) - " + (d.tipo||"VTV") + " del " + (d.semi||d.camion||"") + " vence " + (d.fecha_vencimiento||"");
+    case "registrar_semi": return "🚛 *Nuevo semirremolque* " + (d.codigo||"") + (d.patente?" - patente "+d.patente:"");
+    case "asignar_semi": return "🔗 *Asignar* semi " + (d.semi||"") + " al camión " + (d.camion||"");
+    case "marcar_flete_cobrado": return "✅ *Marcar flete como cobrado* a " + (d.cliente||"");
+    case "eliminar_compra": case "eliminar_venta": case "eliminar_gasto":
+    case "eliminar_entrega": case "eliminar_cobro": case "eliminar_viaje":
+    case "eliminar_flete": return "🗑️ *Eliminar* " + accion.replace("eliminar_","") + (d.cantidad==="todas"?" (TODAS)":"") + (d.cliente?" de "+d.cliente:"") + (d.proveedor?" de "+d.proveedor:"") + (d.chofer?" de "+d.chofer:"") + (d.monto?" por "+fmtMonto(d.monto):"");
+    default: return accion + " " + JSON.stringify(d);
+  }
+}
+
+// Detecta si el usuario respondió afirmativa o negativamente a una confirmación pendiente
+function detectarSiNo(texto) {
+  if (!texto) return null;
+  var t = texto.toLowerCase().trim().replace(/[.,!?¡¿]/g,"");
+  var afirm = ["si","sí","dale","ok","okey","listo","confirmo","confirma","confirmar","si dale","sip","bueno","perfecto","correcto","hacelo","hacelo dale","va","va dale","mandalo","tira","copado","cargalo","metelo","si si","si claro","claro"];
+  var neg = ["no","nope","nop","ne","negativo","cancela","cancelar","mejor no","no dale","para","pará","no no","ni en pedo","esperá","esperar","corregí","corregi","esta mal","mal","incorrecto"];
+  if (afirm.indexOf(t) !== -1) return "si";
+  if (neg.indexOf(t) !== -1) return "no";
+  return null;
+}
+
 app.post("/webhook",async function(req,res){
   var from=req.body.From;
   var body=req.body.Body?req.body.Body.trim():"";
@@ -1250,6 +1301,60 @@ app.post("/webhook",async function(req,res){
 
   if (!body) return res.status(200).send("<Response></Response>");
   console.log("Msg: "+body);
+
+  // ── SISTEMA DE CONFIRMACIÓN ────────────────────────────────
+  // Si hay una acción pendiente de confirmar, ver si el usuario responde SÍ/NO
+  if (window_pendiente[from]) {
+    var siNo = detectarSiNo(body);
+    if (siNo === "si") {
+      var pend = window_pendiente[from];
+      window_pendiente[from] = null;
+      // Ejecutar las operaciones pendientes
+      var archivosAEnviar = [];
+      var respuestaEjec;
+      if (Array.isArray(pend)) {
+        var msgs = [];
+        var okCount = 0, errCount = 0;
+        for (var pi=0; pi<pend.length; pi++) {
+          var op = pend[pi];
+          if (op && op.accion) {
+            var r = await run(op.accion, op.datos || {}, from);
+            if (r.ok) { okCount++; msgs.push((pi+1)+") "+(r.msg || "Listo")); }
+            else { errCount++; msgs.push((pi+1)+") ❌ "+(r.msg || "Error")); }
+            if (r.archivos && r.archivos.length) archivosAEnviar = archivosAEnviar.concat(r.archivos);
+          }
+        }
+        respuestaEjec = "Procesé "+pend.length+" operaciones ("+okCount+" OK"+(errCount?", "+errCount+" con error":"")+"):\n\n" + msgs.join("\n\n");
+      } else {
+        var r = await run(pend.accion, pend.datos || {}, from);
+        respuestaEjec = r.ok ? (r.msg || "Listo!") : (r.msg || "Error.");
+        if (r.archivos && r.archivos.length) archivosAEnviar = r.archivos;
+      }
+      if (!historiales[from]) historiales[from]=[];
+      historiales[from].push({role:"user",content:body});
+      historiales[from].push({role:"assistant",content:respuestaEjec});
+      try{await twilioClient.messages.create({from:process.env.TWILIO_WHATSAPP_NUMBER,to:from,body:respuestaEjec});}catch(e){console.error(e.message);}
+      if (archivosAEnviar && archivosAEnviar.length) {
+        for (var ai=0; ai<archivosAEnviar.length && ai<10; ai++) {
+          var arch = archivosAEnviar[ai];
+          try {
+            await twilioClient.messages.create({from:process.env.TWILIO_WHATSAPP_NUMBER,to:from,body:"📎 " + (arch.categoria ? arch.categoria.replace(/_/g," ").toUpperCase() : arch.nombre),mediaUrl:[arch.url]});
+            await new Promise(function(r){setTimeout(r,500);});
+          } catch(e) { console.error("Error enviando archivo: " + e.message); }
+        }
+      }
+      return res.status(200).send("<Response></Response>");
+    }
+    if (siNo === "no") {
+      window_pendiente[from] = null;
+      var msgCancel = "🚫 Cancelado. Decime de nuevo con la corrección.";
+      try{await twilioClient.messages.create({from:process.env.TWILIO_WHATSAPP_NUMBER,to:from,body:msgCancel});}catch(e){console.error(e.message);}
+      return res.status(200).send("<Response></Response>");
+    }
+    // Si no es SÍ ni NO claro, cancelar la pendiente y procesar el mensaje nuevo normalmente
+    window_pendiente[from] = null;
+  }
+
   if (!historiales[from]) historiales[from]=[];
   historiales[from].push({role:"user",content:body});
   if (historiales[from].length>16) historiales[from]=historiales[from].slice(-16);
@@ -1262,15 +1367,45 @@ app.post("/webhook",async function(req,res){
 
     var parsed = extraerJSON(texto);
     if (!parsed) {
-      // Detectar si el texto PARECE JSON corrupto (no respuesta natural)
       var pareceJSON = /^\s*[\{\[]/.test(texto) || texto.includes('"accion"') || texto.includes('"mensaje":');
       if (pareceJSON) {
         console.error("[PARSER FAIL] Texto parece JSON pero no parsea:", texto.substring(0,300));
         parsed = {accion:"responder",datos:{},mensaje:"❌ Algo se rompió al procesar. Probá de nuevo con menos texto o un dato a la vez."};
       } else {
-        // Es chat natural (pregunta, aclaración, confirmación)
         parsed = {accion:"responder",datos:{},mensaje:texto};
       }
+    }
+
+    // ── CHEQUEAR SI ES OPERACIÓN DE ESCRITURA → PEDIR CONFIRMACIÓN ──
+    var necesitaConfirmar = false;
+    var previewLines = [];
+    if (Array.isArray(parsed)) {
+      // Si hay al menos UNA acción de escritura, confirmar todo el array
+      for (var pi=0; pi<parsed.length; pi++) {
+        if (parsed[pi] && esAccionEscritura(parsed[pi].accion)) {
+          necesitaConfirmar = true;
+          break;
+        }
+      }
+      if (necesitaConfirmar) {
+        for (var pi=0; pi<parsed.length; pi++) {
+          var op = parsed[pi];
+          if (op && op.accion && op.accion !== "responder") {
+            previewLines.push((pi+1)+") "+describirOperacion(op.accion, op.datos));
+          }
+        }
+      }
+    } else if (parsed.accion && esAccionEscritura(parsed.accion)) {
+      necesitaConfirmar = true;
+      previewLines.push(describirOperacion(parsed.accion, parsed.datos));
+    }
+
+    if (necesitaConfirmar) {
+      window_pendiente[from] = parsed;
+      respuesta = "🔎 Te voy a cargar lo siguiente:\n\n" + previewLines.join("\n") + "\n\n¿Lo confirmás? (SÍ / NO)";
+      historiales[from].push({role:"assistant",content:respuesta});
+      try{await twilioClient.messages.create({from:process.env.TWILIO_WHATSAPP_NUMBER,to:from,body:respuesta});}catch(e){console.error(e.message);}
+      return res.status(200).send("<Response></Response>");
     }
 
     // Si el modelo devolvió un ARRAY, ejecutar cada operación y armar resumen
@@ -1284,7 +1419,6 @@ app.post("/webhook",async function(req,res){
           var r = await run(op.accion, op.datos || {}, from);
           if (r.ok) { okCount++; msgs.push((i+1)+") "+(r.msg || op.mensaje || "Listo")); }
           else { errCount++; msgs.push((i+1)+") ❌ "+(r.msg || "Error")); }
-          // Recolectar archivos si la acción los devolvió
           if (r.archivos && r.archivos.length) archivosAEnviar = archivosAEnviar.concat(r.archivos);
         } else if (op && op.mensaje) {
           msgs.push((i+1)+") "+op.mensaje);
@@ -1293,7 +1427,6 @@ app.post("/webhook",async function(req,res){
       var header = "Procesé "+parsed.length+" operaciones ("+okCount+" OK"+(errCount?", "+errCount+" con error":"")+"):\n\n";
       respuesta = header + msgs.join("\n\n");
     }
-    // Si fue un solo objeto, comportamiento original
     else if (parsed.accion && parsed.accion !== "responder") {
       var r = await run(parsed.accion, parsed.datos || {}, from);
       respuesta = r.ok ? (r.msg || parsed.mensaje || "Listo!") : (r.msg || "Error.");
