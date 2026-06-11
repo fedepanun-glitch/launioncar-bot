@@ -21,7 +21,7 @@ var window_ultimoVenc = {};
 var window_pendiente = {};
 
 // ── DIAGNÓSTICO DE ARRANQUE ──
-console.log("=== BOT v5.1 - ODOMETRO EN KM (fix metros Sitrack) ===");
+console.log("=== BOT v5.2 - VIAJES IDEMPOTENTES (recrea viaje si fue borrado) ===");
 console.log("Node:", process.version);
 console.log("Tiene fetch global:", typeof fetch !== "undefined");
 console.log("SUPABASE_URL configurado:", !!process.env.SUPABASE_URL);
@@ -1192,27 +1192,31 @@ app.get("/cron/odometros", async function(req, res) {
           km_recorridos: diff,
           ultima_actualizacion: new Date().toISOString()
         }).eq("id", rHoy.data.id);
-        // Actualizar viaje existente o crear uno nuevo
-        if (rHoy.data.viaje_id) {
-          if (diff > 0) {
-            await db.from("viajes").update({
+        // Actualizar viaje existente o crear uno nuevo (idempotente: si el viaje fue borrado, lo recrea)
+        if (diff > 0 && c.chofer_id) {
+          var viajeOk = false;
+          if (rHoy.data.viaje_id) {
+            var updV = await db.from("viajes").update({
               km: diff,
               observaciones: "Auto-cargado desde Sitrack. Odómetro: " + odometro + " km (inicial dia: " + odoInicial + ")"
-            }).eq("id", rHoy.data.viaje_id);
+            }).eq("id", rHoy.data.viaje_id).select();
+            if (updV.data && updV.data.length > 0) viajeOk = true;
           }
-        } else if (diff > 0 && c.chofer_id) {
-          var insV = await db.from("viajes").insert([{
-            camion_id: c.id,
-            chofer_id: c.chofer_id,
-            fecha: hoy,
-            km: diff,
-            tipo: "venta_propia",
-            origen: "Sitrack",
-            destino: "Auto",
-            observaciones: "Auto-cargado desde Sitrack. Odómetro: " + odometro + " km"
-          }]).select();
-          if (insV.data && insV.data[0]) {
-            await db.from("odometros_diarios").update({viaje_id: insV.data[0].id}).eq("id", rHoy.data.id);
+          if (!viajeOk) {
+            var insV = await db.from("viajes").insert([{
+              camion_id: c.id,
+              chofer_id: c.chofer_id,
+              fecha: hoy,
+              km: diff,
+              tipo: "venta_propia",
+              origen: "Sitrack",
+              destino: "Auto",
+              observaciones: "Auto-cargado desde Sitrack. Odómetro: " + odometro + " km"
+            }]).select();
+            if (insV.error) { console.error("[CRON ODO] Error insert viaje:", insV.error.message); }
+            if (insV.data && insV.data[0]) {
+              await db.from("odometros_diarios").update({viaje_id: insV.data[0].id}).eq("id", rHoy.data.id);
+            }
           }
         }
         statusFinal = "ok_update";
@@ -1259,6 +1263,7 @@ app.get("/cron/odometros", async function(req, res) {
             destino: "Auto",
             observaciones: "Auto-cargado desde Sitrack. Odómetro: " + odometro + " km (inicial " + odoInicial2 + ")"
           }]).select();
+          if (insV2.error) { console.error("[CRON ODO] Error insert viaje (primera):", insV2.error.message); }
           if (insV2.data && insV2.data[0]) {
             await db.from("odometros_diarios").update({viaje_id: insV2.data[0].id}).eq("id", insOdo.data[0].id);
           }
