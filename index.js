@@ -21,7 +21,7 @@ var window_ultimoVenc = {};
 var window_pendiente = {};
 
 // ── DIAGNÓSTICO DE ARRANQUE ──
-console.log("=== BOT v5.3 - DIAG ODOMETRO (lista campos Sitrack) ===");
+console.log("=== BOT v5.4 - DIAG VIAJES (version + detalle viaje en respuesta) ===");
 console.log("Node:", process.version);
 console.log("Tiene fetch global:", typeof fetch !== "undefined");
 console.log("SUPABASE_URL configurado:", !!process.env.SUPABASE_URL);
@@ -1185,6 +1185,7 @@ app.get("/cron/odometros", async function(req, res) {
       var diff = 0;
       var motivoFinal = null;
       var statusFinal = null;
+      var viajeInfo = null;
       if (rHoy.data) {
         // YA hay registro de hoy → estamos sincronizando por segunda+ vez en el día
         var odoInicial = Number(rHoy.data.odometro_inicial_dia || rHoy.data.odometro_km);
@@ -1202,7 +1203,7 @@ app.get("/cron/odometros", async function(req, res) {
               km: diff,
               observaciones: "Auto-cargado desde Sitrack. Odómetro: " + odometro + " km (inicial dia: " + odoInicial + ")"
             }).eq("id", rHoy.data.viaje_id).select();
-            if (updV.data && updV.data.length > 0) viajeOk = true;
+            if (updV.data && updV.data.length > 0) { viajeOk = true; viajeInfo = "viaje actualizado"; }
           }
           if (!viajeOk) {
             var insV = await db.from("viajes").insert([{
@@ -1215,11 +1216,16 @@ app.get("/cron/odometros", async function(req, res) {
               destino: "Auto",
               observaciones: "Auto-cargado desde Sitrack. Odómetro: " + odometro + " km"
             }]).select();
-            if (insV.error) { console.error("[CRON ODO] Error insert viaje:", insV.error.message); }
-            if (insV.data && insV.data[0]) {
+            if (insV.error) { viajeInfo = "INSERT_ERROR: " + insV.error.message; console.error("[CRON ODO] Error insert viaje:", insV.error.message); }
+            else if (insV.data && insV.data[0]) {
+              viajeInfo = "viaje creado id=" + insV.data[0].id;
               await db.from("odometros_diarios").update({viaje_id: insV.data[0].id}).eq("id", rHoy.data.id);
-            }
+            } else { viajeInfo = "insert sin datos ni error"; }
           }
+        } else if (diff > 0 && !c.chofer_id) {
+          viajeInfo = "sin chofer asignado, no se crea viaje";
+        } else if (diff === 0) {
+          viajeInfo = "0 km, no se crea viaje";
         }
         statusFinal = "ok_update";
       } else {
@@ -1265,8 +1271,9 @@ app.get("/cron/odometros", async function(req, res) {
             destino: "Auto",
             observaciones: "Auto-cargado desde Sitrack. Odómetro: " + odometro + " km (inicial " + odoInicial2 + ")"
           }]).select();
-          if (insV2.error) { console.error("[CRON ODO] Error insert viaje (primera):", insV2.error.message); }
-          if (insV2.data && insV2.data[0]) {
+          if (insV2.error) { viajeInfo = "INSERT_ERROR: " + insV2.error.message; console.error("[CRON ODO] Error insert viaje (primera):", insV2.error.message); }
+          else if (insV2.data && insV2.data[0]) {
+            viajeInfo = "viaje creado id=" + insV2.data[0].id;
             await db.from("odometros_diarios").update({viaje_id: insV2.data[0].id}).eq("id", insOdo.data[0].id);
           }
           statusFinal = "ok";
@@ -1278,9 +1285,9 @@ app.get("/cron/odometros", async function(req, res) {
       }
       if (statusFinal === "ok" || statusFinal === "ok_update") {
         totalKm += diff;
-        resumen.push({camion:c.codigo, chofer: c.choferes?c.choferes.apellido:"-", status:statusFinal, km:diff, odometro:odometro});
+        resumen.push({camion:c.codigo, chofer: c.choferes?c.choferes.apellido:"-", status:statusFinal, km:diff, odometro:odometro, viaje:viajeInfo});
       } else {
-        resumen.push({camion:c.codigo, status:statusFinal, odometro:odometro});
+        resumen.push({camion:c.codigo, status:statusFinal, odometro:odometro, viaje:viajeInfo});
       }
     }
     var msg = "📊 *Resumen Sitrack — " + hoy + "*\n\n";
@@ -1301,7 +1308,7 @@ app.get("/cron/odometros", async function(req, res) {
         });
       } catch(e) { console.error("[/cron/odometros] Error WhatsApp:", e.message); }
     }
-    res.json({ok:true, fecha:hoy, totalKm:totalKm, resumen:resumen, mensaje:msg});
+    res.json({ok:true, version:"v5.4", fecha:hoy, totalKm:totalKm, resumen:resumen, mensaje:msg});
   } catch (e) {
     console.error("[/cron/odometros] Error:", e.message);
     res.status(500).json({ok:false, error:e.message});
