@@ -21,7 +21,7 @@ var window_ultimoVenc = {};
 var window_pendiente = {};
 
 // ── DIAGNÓSTICO DE ARRANQUE ──
-console.log("=== BOT v5.2 - VIAJES IDEMPOTENTES (recrea viaje si fue borrado) ===");
+console.log("=== BOT v5.3 - DIAG ODOMETRO (lista campos Sitrack) ===");
 console.log("Node:", process.version);
 console.log("Tiene fetch global:", typeof fetch !== "undefined");
 console.log("SUPABASE_URL configurado:", !!process.env.SUPABASE_URL);
@@ -83,7 +83,7 @@ async function consultarUbicacionSitrack(patente) {
     });
     var txt = await resp.text();
     console.log("[SITRACK] Status:", resp.status);
-    console.log("[SITRACK] Respuesta:", txt.substring(0, 500));
+    console.log("[SITRACK] Respuesta:", txt.substring(0, 2500));
     if (resp.status === 401 || resp.status === 403) {
       return {ok:false, error:"Credenciales rechazadas por Sitrack (HTTP "+resp.status+"). Sitrack respondio: "+txt.substring(0,150)};
     }
@@ -1176,7 +1176,9 @@ app.get("/cron/odometros", async function(req, res) {
       if (Array.isArray(report)) report = report[0];
       if (report && report.reports && Array.isArray(report.reports)) report = report.reports[0];
       if (!report) { resumen.push({camion:c.codigo, status:"error", motivo:"Sin datos GPS"}); continue; }
+      console.log("[CRON ODO] " + c.codigo + " campos disponibles: " + Object.keys(report).join(", "));
       var odometro = normalizarOdometro(report.odometer || report.odometro || report.km);
+      console.log("[CRON ODO] " + c.codigo + " odometer=" + report.odometer + " odometro=" + report.odometro + " km=" + report.km + " -> normalizado=" + odometro);
       if (!odometro) { resumen.push({camion:c.codigo, status:"error", motivo:"Sin odómetro en respuesta"}); continue; }
       // Guardar/actualizar odómetro de hoy con lógica de tiempo real
       var rHoy = await db.from("odometros_diarios").select("*").eq("camion_id",c.id).eq("fecha",hoy).maybeSingle();
