@@ -21,7 +21,7 @@ var window_ultimoVenc = {};
 var window_pendiente = {};
 
 // ── DIAGNÓSTICO DE ARRANQUE ──
-console.log("=== BOT v5.0 - DIAGNOSTICO SITRACK (trim + log largo + error detallado) ===");
+console.log("=== BOT v5.1 - ODOMETRO EN KM (fix metros Sitrack) ===");
 console.log("Node:", process.version);
 console.log("Tiene fetch global:", typeof fetch !== "undefined");
 console.log("SUPABASE_URL configurado:", !!process.env.SUPABASE_URL);
@@ -99,6 +99,17 @@ async function consultarUbicacionSitrack(patente) {
   }
 }
 
+// Normaliza el odometro de Sitrack a KILOMETROS.
+// Sitrack devuelve el odometro en METROS. Si el valor es gigante (mas de 2 millones,
+// imposible en km para un camion) lo dividimos por 1000 para pasarlo a km de verdad.
+function normalizarOdometro(val) {
+  if (val === undefined || val === null) return null;
+  var n = Number(val);
+  if (isNaN(n)) return null;
+  if (n > 2000000) n = n / 1000;
+  return Math.round(n);
+}
+
 // Formatea el reporte de Sitrack a texto legible para WhatsApp
 function formatearReporteSitrack(report, codigoCam, patente) {
   // La estructura puede variar - intentamos varios campos comunes
@@ -107,7 +118,7 @@ function formatearReporteSitrack(report, codigoCam, patente) {
   var speed = report.speed || report.velocidad || report.velocity;
   var address = report.address || report.direccion || report.location || report.formattedAddress;
   var datetime = report.datetime || report.date || report.fecha || report.timestamp || report.reportDate;
-  var odometer = report.odometer || report.odometro || report.km;
+  var odometer = normalizarOdometro(report.odometer || report.odometro || report.km);
   var ignition = report.ignition || report.encendido;
   var lineas = [];
   lineas.push("📍 "+codigoCam+(patente?" ("+patente+")":""));
@@ -1165,9 +1176,8 @@ app.get("/cron/odometros", async function(req, res) {
       if (Array.isArray(report)) report = report[0];
       if (report && report.reports && Array.isArray(report.reports)) report = report.reports[0];
       if (!report) { resumen.push({camion:c.codigo, status:"error", motivo:"Sin datos GPS"}); continue; }
-      var odometro = report.odometer || report.odometro || report.km;
+      var odometro = normalizarOdometro(report.odometer || report.odometro || report.km);
       if (!odometro) { resumen.push({camion:c.codigo, status:"error", motivo:"Sin odómetro en respuesta"}); continue; }
-      odometro = Number(odometro);
       // Guardar/actualizar odómetro de hoy con lógica de tiempo real
       var rHoy = await db.from("odometros_diarios").select("*").eq("camion_id",c.id).eq("fecha",hoy).maybeSingle();
       var diff = 0;
@@ -1314,7 +1324,7 @@ app.get("/api/flota", async function(req, res) {
               speed: (r.speed!==undefined?r.speed:(r.velocidad!==undefined?r.velocidad:(r.velocity!==undefined?r.velocity:null))),
               address: r.address || r.direccion || r.location || r.formattedAddress || null,
               datetime: r.datetime || r.date || r.fecha || r.timestamp || r.reportDate || null,
-              odometer: (r.odometer!==undefined?r.odometer:(r.odometro!==undefined?r.odometro:(r.km!==undefined?r.km:null))),
+              odometer: normalizarOdometro(r.odometer!==undefined?r.odometer:(r.odometro!==undefined?r.odometro:(r.km!==undefined?r.km:null))),
               ignition: (r.ignition!==undefined?r.ignition:(r.encendido!==undefined?r.encendido:null))
             };
           }
