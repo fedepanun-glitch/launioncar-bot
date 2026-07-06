@@ -28,7 +28,7 @@ var window_ultimoVenc = {};
 var window_pendiente = {};
 
 // ── DIAGNÓSTICO DE ARRANQUE ──
-console.log("=== BOT v5.6 - cron odometros: candado por dias + viaje siempre ===");
+console.log("=== BOT v5.7 - probador historico Sitrack ===");
 console.log("Node:", process.version);
 console.log("Tiene fetch global:", typeof fetch !== "undefined");
 console.log("SUPABASE_URL configurado:", !!process.env.SUPABASE_URL);
@@ -1394,6 +1394,58 @@ app.get("/api/flota", async function(req, res) {
     console.error("[/api/flota] Error:", e.message);
     res.status(500).json({ok:false, error:e.message});
   }
+});
+
+// ── DIAGNÓSTICO TEMPORAL: ¿el endpoint /v2/report acepta fechas (histórico)? ──
+// Uso: /test/sitrack-hist?key=CRON_KEY&patente=AD497XC&desde=2026-06-10&hasta=2026-06-25
+// Prueba varias combinaciones de nombres de parámetros y devuelve qué contestó Sitrack en cada una.
+app.get("/test/sitrack-hist", async function(req, res) {
+  if (req.query.key !== process.env.CRON_KEY) {
+    return res.status(401).json({ok:false, error:"Unauthorized"});
+  }
+  var patente = req.query.patente;
+  if (!patente) return res.status(400).json({ok:false, error:"Falta ?patente=XXX (ej: AD497XC)"});
+  var desde = req.query.desde || "2026-06-10";
+  var hasta = req.query.hasta || "2026-06-25";
+  if (!process.env.SITRACK_USER || !process.env.SITRACK_PASS) {
+    return res.status(500).json({ok:false, error:"Sin credenciales Sitrack en Render"});
+  }
+  var sUser = process.env.SITRACK_USER.trim();
+  var sPass = process.env.SITRACK_PASS.trim();
+  var auth = "Basic " + Buffer.from(sUser+":"+sPass).toString("base64");
+  var base = "https://externalappgw.ar.sitrack.com/v2/report?assetId=" + encodeURIComponent(patente);
+  var desdeISO = desde + "T00:00:00", hastaISO = hasta + "T23:59:59";
+  var combos = [
+    {nombre:"baseline (sin fecha)", qs:""},
+    {nombre:"from/to", qs:"&from="+desde+"&to="+hasta},
+    {nombre:"startDate/endDate", qs:"&startDate="+desde+"&endDate="+hasta},
+    {nombre:"dateFrom/dateTo", qs:"&dateFrom="+desde+"&dateTo="+hasta},
+    {nombre:"desde/hasta", qs:"&desde="+desde+"&hasta="+hasta},
+    {nombre:"fechaInicio/fechaFin", qs:"&fechaInicio="+desde+"&fechaFin="+hasta},
+    {nombre:"initialDate/finalDate", qs:"&initialDate="+desde+"&finalDate="+hasta},
+    {nombre:"since/until", qs:"&since="+desde+"&until="+hasta},
+    {nombre:"from/to ISO", qs:"&from="+encodeURIComponent(desdeISO)+"&to="+encodeURIComponent(hastaISO)},
+    {nombre:"startTime/endTime ISO", qs:"&startTime="+encodeURIComponent(desdeISO)+"&endTime="+encodeURIComponent(hastaISO)}
+  ];
+  var resultados = [];
+  for (var i=0; i<combos.length; i++) {
+    var url = base + combos[i].qs;
+    try {
+      var r = await _fetch(url, {method:"GET", headers:{"Authorization":auth, "Accept":"application/json"}});
+      var txt = await r.text();
+      var nReports = null;
+      try {
+        var j = JSON.parse(txt);
+        var arr = Array.isArray(j) ? j : (j.reports || (j[0] && j[0].reports));
+        if (Array.isArray(arr)) nReports = arr.length;
+      } catch(e) {}
+      resultados.push({combo:combos[i].nombre, status:r.status, largoRespuesta:txt.length, cantReports:nReports, muestra:txt.substring(0,500)});
+    } catch(e) {
+      resultados.push({combo:combos[i].nombre, error:e.message});
+    }
+    await new Promise(function(rr){setTimeout(rr,600);});
+  }
+  res.json({ok:true, patente:patente, desde:desde, hasta:hasta, pista:"Mirá cuál combo cambia 'largoRespuesta' o 'cantReports' respecto del baseline: esa es la que trae histórico", resultados:resultados});
 });
 
 // ── AVISOS DE LA APP DE TAREAS → WHATSAPP ──
