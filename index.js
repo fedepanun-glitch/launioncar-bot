@@ -28,7 +28,7 @@ var window_ultimoVenc = {};
 var window_pendiente = {};
 
 // ── DIAGNÓSTICO DE ARRANQUE ──
-console.log("=== BOT v5.7 - probador historico Sitrack ===");
+console.log("=== BOT v5.8 - probador historico Sitrack v2 ===");
 console.log("Node:", process.version);
 console.log("Tiene fetch global:", typeof fetch !== "undefined");
 console.log("SUPABASE_URL configurado:", !!process.env.SUPABASE_URL);
@@ -1446,6 +1446,63 @@ app.get("/test/sitrack-hist", async function(req, res) {
     await new Promise(function(rr){setTimeout(rr,600);});
   }
   res.json({ok:true, patente:patente, desde:desde, hasta:hasta, pista:"Mirá cuál combo cambia 'largoRespuesta' o 'cantReports' respecto del baseline: esa es la que trae histórico", resultados:resultados});
+});
+
+// ── DIAGNÓSTICO TEMPORAL 2: probar RUTAS y nombres de parámetro alternativos ──
+// Uso: /test/sitrack-hist2?key=CRON_KEY&patente=AD497XC&desde=2026-06-10&hasta=2026-06-25
+app.get("/test/sitrack-hist2", async function(req, res) {
+  if (req.query.key !== process.env.CRON_KEY) {
+    return res.status(401).json({ok:false, error:"Unauthorized"});
+  }
+  var patente = req.query.patente;
+  if (!patente) return res.status(400).json({ok:false, error:"Falta ?patente=XXX"});
+  var d = req.query.desde || "2026-06-10";
+  var h = req.query.hasta || "2026-06-25";
+  var sUser = process.env.SITRACK_USER.trim();
+  var sPass = process.env.SITRACK_PASS.trim();
+  var auth = "Basic " + Buffer.from(sUser+":"+sPass).toString("base64");
+  var host = "https://externalappgw.ar.sitrack.com";
+  var P = encodeURIComponent(patente);
+
+  // Primero traemos el reporte actual para sacar el deviceId (algunas APIs piden deviceId para histórico)
+  var deviceId = null;
+  try {
+    var rBase = await _fetch(host+"/v2/report?assetId="+P, {method:"GET", headers:{"Authorization":auth, "Accept":"application/json"}});
+    var jBase = JSON.parse(await rBase.text());
+    var repBase = Array.isArray(jBase) ? jBase[0] : (jBase.reports ? jBase.reports[0] : jBase);
+    if (repBase && repBase.deviceId) deviceId = repBase.deviceId;
+  } catch(e) {}
+
+  var pruebas = [
+    {n:"/v2/reports (plural) from/to", url: host+"/v2/reports?assetId="+P+"&from="+d+"&to="+h},
+    {n:"/v2/report/history", url: host+"/v2/report/history?assetId="+P+"&from="+d+"&to="+h},
+    {n:"/v2/reportHistory", url: host+"/v2/reportHistory?assetId="+P+"&from="+d+"&to="+h},
+    {n:"/v2/history", url: host+"/v2/history?assetId="+P+"&from="+d+"&to="+h},
+    {n:"/v2/track", url: host+"/v2/track?assetId="+P+"&from="+d+"&to="+h},
+    {n:"/v2/tracks", url: host+"/v2/tracks?assetId="+P+"&from="+d+"&to="+h},
+    {n:"/v2/positions", url: host+"/v2/positions?assetId="+P+"&from="+d+"&to="+h},
+    {n:"/v2/events", url: host+"/v2/events?assetId="+P+"&from="+d+"&to="+h},
+    {n:"/v2/route", url: host+"/v2/route?assetId="+P+"&from="+d+"&to="+h},
+    {n:"/v2/trip", url: host+"/v2/trip?assetId="+P+"&from="+d+"&to="+h},
+    {n:"report fechaDesde/fechaHasta", url: host+"/v2/report?assetId="+P+"&fechaDesde="+d+"&fechaHasta="+h},
+    {n:"report dateStart/dateEnd", url: host+"/v2/report?assetId="+P+"&dateStart="+d+"&dateEnd="+h},
+    {n:"report reportDateFrom/reportDateTo", url: host+"/v2/report?assetId="+P+"&reportDateFrom="+d+"&reportDateTo="+h},
+    {n:"report reportType=history", url: host+"/v2/report?assetId="+P+"&reportType=history&from="+d+"&to="+h},
+    {n:"reports por deviceId", url: host+"/v2/reports?deviceId="+(deviceId||"")+"&from="+d+"&to="+h}
+  ];
+
+  var resultados = [];
+  for (var i=0; i<pruebas.length; i++) {
+    try {
+      var r = await _fetch(pruebas[i].url, {method:"GET", headers:{"Authorization":auth, "Accept":"application/json"}});
+      var txt = await r.text();
+      resultados.push({prueba:pruebas[i].n, status:r.status, largo:txt.length, muestra:txt.substring(0,350)});
+    } catch(e) {
+      resultados.push({prueba:pruebas[i].n, error:e.message});
+    }
+    await new Promise(function(rr){setTimeout(rr,600);});
+  }
+  res.json({ok:true, patente:patente, deviceId:deviceId, desde:d, hasta:h, pista:"Buscá el que dé status 200 (no 501). Ese es el endpoint del histórico.", resultados:resultados});
 });
 
 // ── AVISOS DE LA APP DE TAREAS → WHATSAPP ──
