@@ -28,7 +28,7 @@ var window_ultimoVenc = {};
 var window_pendiente = {};
 
 // ── DIAGNÓSTICO DE ARRANQUE ──
-console.log("=== BOT v5.8 - probador historico Sitrack v2 ===");
+console.log("=== BOT v5.9 - probador historico Sitrack v3 ===");
 console.log("Node:", process.version);
 console.log("Tiene fetch global:", typeof fetch !== "undefined");
 console.log("SUPABASE_URL configurado:", !!process.env.SUPABASE_URL);
@@ -1503,6 +1503,58 @@ app.get("/test/sitrack-hist2", async function(req, res) {
     await new Promise(function(rr){setTimeout(rr,600);});
   }
   res.json({ok:true, patente:patente, deviceId:deviceId, desde:d, hasta:h, pista:"Buscá el que dé status 200 (no 501). Ese es el endpoint del histórico.", resultados:resultados});
+});
+
+// ── DIAGNÓSTICO TEMPORAL 3: barrer nombres de parámetro en las rutas que SÍ existen ──
+// Uso: /test/sitrack-hist3?key=CRON_KEY&patente=AD497XC&desde=2026-06-10&hasta=2026-06-25
+app.get("/test/sitrack-hist3", async function(req, res) {
+  if (req.query.key !== process.env.CRON_KEY) {
+    return res.status(401).json({ok:false, error:"Unauthorized"});
+  }
+  var patente = req.query.patente;
+  if (!patente) return res.status(400).json({ok:false, error:"Falta ?patente=XXX"});
+  var d = req.query.desde || "2026-06-10";
+  var h = req.query.hasta || "2026-06-25";
+  var sUser = process.env.SITRACK_USER.trim();
+  var sPass = process.env.SITRACK_PASS.trim();
+  var auth = "Basic " + Buffer.from(sUser+":"+sPass).toString("base64");
+  var host = "https://externalappgw.ar.sitrack.com";
+  var P = encodeURIComponent(patente);
+  // Rutas confirmadas que existen (dieron 501, no 404)
+  var rutas = ["/v2/reports", "/v2/report/history"];
+  // Pares de nombres de parámetro de fecha a probar
+  var pares = [
+    ["fromDate","toDate"],
+    ["dateFrom","dateTo"],
+    ["startDate","endDate"],
+    ["initialDate","finalDate"],
+    ["minDate","maxDate"],
+    ["fromReportDate","toReportDate"],
+    ["beginDate","endDate"],
+    ["dateInit","dateEnd"],
+    ["reportDateFrom","reportDateTo"],
+    ["startDateTime","endDateTime"]
+  ];
+  var resultados = [];
+  for (var ri=0; ri<rutas.length; ri++) {
+    for (var pi=0; pi<pares.length; pi++) {
+      var k1 = pares[pi][0], k2 = pares[pi][1];
+      var url = host + rutas[ri] + "?assetId=" + P + "&" + k1 + "=" + d + "&" + k2 + "=" + h;
+      try {
+        var r = await _fetch(url, {method:"GET", headers:{"Authorization":auth, "Accept":"application/json"}});
+        var txt = await r.text();
+        // Solo guardamos detalle si NO es el 501 típico (para no llenar de ruido)
+        var esServiceNotFound = txt.indexOf("Service not found") !== -1;
+        resultados.push({ruta:rutas[ri], params:k1+"/"+k2, status:r.status, serviceNotFound:esServiceNotFound, largo:txt.length, muestra: esServiceNotFound ? "(service not found)" : txt.substring(0,400)});
+      } catch(e) {
+        resultados.push({ruta:rutas[ri], params:k1+"/"+k2, error:e.message});
+      }
+      await new Promise(function(rr){setTimeout(rr,500);});
+    }
+  }
+  // Resaltar los que NO son "service not found" (candidatos ganadores)
+  var candidatos = resultados.filter(function(x){ return x.serviceNotFound === false && !x.error; });
+  res.json({ok:true, patente:patente, desde:d, hasta:h, GANADORES_POSIBLES: candidatos.length ? candidatos : "ninguno todavía — probablemente haya que preguntarle al asesor el nombre exacto", resultados:resultados});
 });
 
 // ── AVISOS DE LA APP DE TAREAS → WHATSAPP ──
