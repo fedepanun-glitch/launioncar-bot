@@ -28,7 +28,7 @@ var window_ultimoVenc = {};
 var window_pendiente = {};
 
 // ── DIAGNÓSTICO DE ARRANQUE ──
-console.log("=== BOT v5.9 - probador historico Sitrack v3 ===");
+console.log("=== BOT v6.0 - plantilla aviso_tarea_v2 + limpieza probadores ===");
 console.log("Node:", process.version);
 console.log("Tiene fetch global:", typeof fetch !== "undefined");
 console.log("SUPABASE_URL configurado:", !!process.env.SUPABASE_URL);
@@ -1339,7 +1339,7 @@ app.get("/cron/odometros", async function(req, res) {
         });
       } catch(e) { console.error("[/cron/odometros] Error WhatsApp:", e.message); }
     }
-    res.json({ok:true, version:"v5.6", fecha:hoy, totalKm:totalKm, resumen:resumen, mensaje:msg});
+    res.json({ok:true, version:"v6.0", fecha:hoy, totalKm:totalKm, resumen:resumen, mensaje:msg});
   } catch (e) {
     console.error("[/cron/odometros] Error:", e.message);
     res.status(500).json({ok:false, error:e.message});
@@ -1396,165 +1396,70 @@ app.get("/api/flota", async function(req, res) {
   }
 });
 
-// ── DIAGNÓSTICO TEMPORAL: ¿el endpoint /v2/report acepta fechas (histórico)? ──
-// Uso: /test/sitrack-hist?key=CRON_KEY&patente=AD497XC&desde=2026-06-10&hasta=2026-06-25
-// Prueba varias combinaciones de nombres de parámetros y devuelve qué contestó Sitrack en cada una.
-app.get("/test/sitrack-hist", async function(req, res) {
-  if (req.query.key !== process.env.CRON_KEY) {
-    return res.status(401).json({ok:false, error:"Unauthorized"});
-  }
-  var patente = req.query.patente;
-  if (!patente) return res.status(400).json({ok:false, error:"Falta ?patente=XXX (ej: AD497XC)"});
-  var desde = req.query.desde || "2026-06-10";
-  var hasta = req.query.hasta || "2026-06-25";
-  if (!process.env.SITRACK_USER || !process.env.SITRACK_PASS) {
-    return res.status(500).json({ok:false, error:"Sin credenciales Sitrack en Render"});
-  }
-  var sUser = process.env.SITRACK_USER.trim();
-  var sPass = process.env.SITRACK_PASS.trim();
-  var auth = "Basic " + Buffer.from(sUser+":"+sPass).toString("base64");
-  var base = "https://externalappgw.ar.sitrack.com/v2/report?assetId=" + encodeURIComponent(patente);
-  var desdeISO = desde + "T00:00:00", hastaISO = hasta + "T23:59:59";
-  var combos = [
-    {nombre:"baseline (sin fecha)", qs:""},
-    {nombre:"from/to", qs:"&from="+desde+"&to="+hasta},
-    {nombre:"startDate/endDate", qs:"&startDate="+desde+"&endDate="+hasta},
-    {nombre:"dateFrom/dateTo", qs:"&dateFrom="+desde+"&dateTo="+hasta},
-    {nombre:"desde/hasta", qs:"&desde="+desde+"&hasta="+hasta},
-    {nombre:"fechaInicio/fechaFin", qs:"&fechaInicio="+desde+"&fechaFin="+hasta},
-    {nombre:"initialDate/finalDate", qs:"&initialDate="+desde+"&finalDate="+hasta},
-    {nombre:"since/until", qs:"&since="+desde+"&until="+hasta},
-    {nombre:"from/to ISO", qs:"&from="+encodeURIComponent(desdeISO)+"&to="+encodeURIComponent(hastaISO)},
-    {nombre:"startTime/endTime ISO", qs:"&startTime="+encodeURIComponent(desdeISO)+"&endTime="+encodeURIComponent(hastaISO)}
-  ];
-  var resultados = [];
-  for (var i=0; i<combos.length; i++) {
-    var url = base + combos[i].qs;
-    try {
-      var r = await _fetch(url, {method:"GET", headers:{"Authorization":auth, "Accept":"application/json"}});
-      var txt = await r.text();
-      var nReports = null;
-      try {
-        var j = JSON.parse(txt);
-        var arr = Array.isArray(j) ? j : (j.reports || (j[0] && j[0].reports));
-        if (Array.isArray(arr)) nReports = arr.length;
-      } catch(e) {}
-      resultados.push({combo:combos[i].nombre, status:r.status, largoRespuesta:txt.length, cantReports:nReports, muestra:txt.substring(0,500)});
-    } catch(e) {
-      resultados.push({combo:combos[i].nombre, error:e.message});
-    }
-    await new Promise(function(rr){setTimeout(rr,600);});
-  }
-  res.json({ok:true, patente:patente, desde:desde, hasta:hasta, pista:"Mirá cuál combo cambia 'largoRespuesta' o 'cantReports' respecto del baseline: esa es la que trae histórico", resultados:resultados});
-});
+// SID de la plantilla aprobada en Twilio (aviso_tarea_v2). Se puede pisar desde Render.
+var TEMPLATE_TAREA_SID = process.env.TWILIO_TEMPLATE_TAREA || "HX09c412e882cc1460f72ac3d494ef1eaa";
 
-// ── DIAGNÓSTICO TEMPORAL 2: probar RUTAS y nombres de parámetro alternativos ──
-// Uso: /test/sitrack-hist2?key=CRON_KEY&patente=AD497XC&desde=2026-06-10&hasta=2026-06-25
-app.get("/test/sitrack-hist2", async function(req, res) {
-  if (req.query.key !== process.env.CRON_KEY) {
-    return res.status(401).json({ok:false, error:"Unauthorized"});
-  }
-  var patente = req.query.patente;
-  if (!patente) return res.status(400).json({ok:false, error:"Falta ?patente=XXX"});
-  var d = req.query.desde || "2026-06-10";
-  var h = req.query.hasta || "2026-06-25";
-  var sUser = process.env.SITRACK_USER.trim();
-  var sPass = process.env.SITRACK_PASS.trim();
-  var auth = "Basic " + Buffer.from(sUser+":"+sPass).toString("base64");
-  var host = "https://externalappgw.ar.sitrack.com";
-  var P = encodeURIComponent(patente);
+// Recorta un texto para usarlo como variable de plantilla (WhatsApp no acepta variables vacias)
+function varTpl(v, fallback) {
+  var s = (v === undefined || v === null) ? "" : String(v).trim();
+  s = s.replace(/\s+/g, " ");
+  if (!s) s = fallback || "-";
+  if (s.length > 200) s = s.substring(0, 197) + "...";
+  return s;
+}
 
-  // Primero traemos el reporte actual para sacar el deviceId (algunas APIs piden deviceId para histórico)
-  var deviceId = null;
+// Envia el aviso de tarea. Primero intenta mensaje libre (funciona si el usuario escribio
+// en las ultimas 24hs). Si Twilio lo rechaza por estar fuera de esa ventana, reintenta
+// con la plantilla aprobada (business-initiated).
+async function enviarAvisoTarea(destino, mensaje, vars) {
   try {
-    var rBase = await _fetch(host+"/v2/report?assetId="+P, {method:"GET", headers:{"Authorization":auth, "Accept":"application/json"}});
-    var jBase = JSON.parse(await rBase.text());
-    var repBase = Array.isArray(jBase) ? jBase[0] : (jBase.reports ? jBase.reports[0] : jBase);
-    if (repBase && repBase.deviceId) deviceId = repBase.deviceId;
-  } catch(e) {}
-
-  var pruebas = [
-    {n:"/v2/reports (plural) from/to", url: host+"/v2/reports?assetId="+P+"&from="+d+"&to="+h},
-    {n:"/v2/report/history", url: host+"/v2/report/history?assetId="+P+"&from="+d+"&to="+h},
-    {n:"/v2/reportHistory", url: host+"/v2/reportHistory?assetId="+P+"&from="+d+"&to="+h},
-    {n:"/v2/history", url: host+"/v2/history?assetId="+P+"&from="+d+"&to="+h},
-    {n:"/v2/track", url: host+"/v2/track?assetId="+P+"&from="+d+"&to="+h},
-    {n:"/v2/tracks", url: host+"/v2/tracks?assetId="+P+"&from="+d+"&to="+h},
-    {n:"/v2/positions", url: host+"/v2/positions?assetId="+P+"&from="+d+"&to="+h},
-    {n:"/v2/events", url: host+"/v2/events?assetId="+P+"&from="+d+"&to="+h},
-    {n:"/v2/route", url: host+"/v2/route?assetId="+P+"&from="+d+"&to="+h},
-    {n:"/v2/trip", url: host+"/v2/trip?assetId="+P+"&from="+d+"&to="+h},
-    {n:"report fechaDesde/fechaHasta", url: host+"/v2/report?assetId="+P+"&fechaDesde="+d+"&fechaHasta="+h},
-    {n:"report dateStart/dateEnd", url: host+"/v2/report?assetId="+P+"&dateStart="+d+"&dateEnd="+h},
-    {n:"report reportDateFrom/reportDateTo", url: host+"/v2/report?assetId="+P+"&reportDateFrom="+d+"&reportDateTo="+h},
-    {n:"report reportType=history", url: host+"/v2/report?assetId="+P+"&reportType=history&from="+d+"&to="+h},
-    {n:"reports por deviceId", url: host+"/v2/reports?deviceId="+(deviceId||"")+"&from="+d+"&to="+h}
-  ];
-
-  var resultados = [];
-  for (var i=0; i<pruebas.length; i++) {
-    try {
-      var r = await _fetch(pruebas[i].url, {method:"GET", headers:{"Authorization":auth, "Accept":"application/json"}});
-      var txt = await r.text();
-      resultados.push({prueba:pruebas[i].n, status:r.status, largo:txt.length, muestra:txt.substring(0,350)});
-    } catch(e) {
-      resultados.push({prueba:pruebas[i].n, error:e.message});
-    }
-    await new Promise(function(rr){setTimeout(rr,600);});
+    await twilioClient.messages.create({
+      from: process.env.TWILIO_WHATSAPP_NUMBER,
+      to: destino,
+      body: mensaje
+    });
+    return "libre";
+  } catch (e) {
+    var codigo = e && e.code ? String(e.code) : "";
+    var txt = (e && e.message ? e.message : "").toLowerCase();
+    var fueraDeVentana = codigo === "63016" || txt.indexOf("outside") !== -1 || txt.indexOf("freeform") !== -1 || txt.indexOf("24") !== -1;
+    if (!fueraDeVentana) throw e;
+    // Fuera de la ventana de 24hs -> usar plantilla aprobada
+    var v = vars || {};
+    var cv = {
+      "1": varTpl(v.tarea, "Nueva tarea"),
+      "2": varTpl(v.detalle, "Ver detalle en el sistema"),
+      "3": varTpl(v.prioridad, "Normal"),
+      "4": varTpl(v.vence, "Sin fecha")
+    };
+    await twilioClient.messages.create({
+      from: process.env.TWILIO_WHATSAPP_NUMBER,
+      to: destino,
+      contentSid: TEMPLATE_TAREA_SID,
+      contentVariables: JSON.stringify(cv)
+    });
+    return "plantilla";
   }
-  res.json({ok:true, patente:patente, deviceId:deviceId, desde:d, hasta:h, pista:"Buscá el que dé status 200 (no 501). Ese es el endpoint del histórico.", resultados:resultados});
-});
+}
 
-// ── DIAGNÓSTICO TEMPORAL 3: barrer nombres de parámetro en las rutas que SÍ existen ──
-// Uso: /test/sitrack-hist3?key=CRON_KEY&patente=AD497XC&desde=2026-06-10&hasta=2026-06-25
-app.get("/test/sitrack-hist3", async function(req, res) {
+// Prueba rapida del aviso de tarea (para verificar que la plantilla aprobada funciona).
+// Uso: /test/aviso?key=CRON_KEY   -> te manda un aviso de prueba a FEDE_WHATSAPP
+app.get("/test/aviso", async function(req, res) {
   if (req.query.key !== process.env.CRON_KEY) {
     return res.status(401).json({ok:false, error:"Unauthorized"});
   }
-  var patente = req.query.patente;
-  if (!patente) return res.status(400).json({ok:false, error:"Falta ?patente=XXX"});
-  var d = req.query.desde || "2026-06-10";
-  var h = req.query.hasta || "2026-06-25";
-  var sUser = process.env.SITRACK_USER.trim();
-  var sPass = process.env.SITRACK_PASS.trim();
-  var auth = "Basic " + Buffer.from(sUser+":"+sPass).toString("base64");
-  var host = "https://externalappgw.ar.sitrack.com";
-  var P = encodeURIComponent(patente);
-  // Rutas confirmadas que existen (dieron 501, no 404)
-  var rutas = ["/v2/reports", "/v2/report/history"];
-  // Pares de nombres de parámetro de fecha a probar
-  var pares = [
-    ["fromDate","toDate"],
-    ["dateFrom","dateTo"],
-    ["startDate","endDate"],
-    ["initialDate","finalDate"],
-    ["minDate","maxDate"],
-    ["fromReportDate","toReportDate"],
-    ["beginDate","endDate"],
-    ["dateInit","dateEnd"],
-    ["reportDateFrom","reportDateTo"],
-    ["startDateTime","endDateTime"]
-  ];
-  var resultados = [];
-  for (var ri=0; ri<rutas.length; ri++) {
-    for (var pi=0; pi<pares.length; pi++) {
-      var k1 = pares[pi][0], k2 = pares[pi][1];
-      var url = host + rutas[ri] + "?assetId=" + P + "&" + k1 + "=" + d + "&" + k2 + "=" + h;
-      try {
-        var r = await _fetch(url, {method:"GET", headers:{"Authorization":auth, "Accept":"application/json"}});
-        var txt = await r.text();
-        // Solo guardamos detalle si NO es el 501 típico (para no llenar de ruido)
-        var esServiceNotFound = txt.indexOf("Service not found") !== -1;
-        resultados.push({ruta:rutas[ri], params:k1+"/"+k2, status:r.status, serviceNotFound:esServiceNotFound, largo:txt.length, muestra: esServiceNotFound ? "(service not found)" : txt.substring(0,400)});
-      } catch(e) {
-        resultados.push({ruta:rutas[ri], params:k1+"/"+k2, error:e.message});
-      }
-      await new Promise(function(rr){setTimeout(rr,500);});
-    }
+  var destino = req.query.to || process.env.FEDE_WHATSAPP;
+  if (!destino) return res.status(400).json({ok:false, error:"Falta FEDE_WHATSAPP en Render o ?to=whatsapp:+549..."});
+  try {
+    var via = await enviarAvisoTarea(
+      destino,
+      "Aviso de prueba del sistema La Union Car.",
+      { tarea: "Prueba de notificacion", detalle: "Si recibis esto, los avisos funcionan.", prioridad: "Baja", vence: "Hoy" }
+    );
+    res.json({ok:true, enviadoPor: via, destino: destino, templateSid: TEMPLATE_TAREA_SID});
+  } catch (e) {
+    res.status(500).json({ok:false, error: e.message, code: e.code || null, templateSid: TEMPLATE_TAREA_SID});
   }
-  // Resaltar los que NO son "service not found" (candidatos ganadores)
-  var candidatos = resultados.filter(function(x){ return x.serviceNotFound === false && !x.error; });
-  res.json({ok:true, patente:patente, desde:d, hasta:h, GANADORES_POSIBLES: candidatos.length ? candidatos : "ninguno todavía — probablemente haya que preguntarle al asesor el nombre exacto", resultados:resultados});
 });
 
 // ── AVISOS DE LA APP DE TAREAS → WHATSAPP ──
@@ -1572,7 +1477,7 @@ app.post("/notificar-tareas", async function(req, res) {
   if (!Array.isArray(avisos) || !avisos.length) {
     return res.status(400).json({ok:false, error:"faltan avisos"});
   }
-  var enviados = 0, saltados = 0, errores = [];
+  var enviados = 0, saltados = 0, porPlantilla = 0, errores = [];
   for (var i = 0; i < avisos.length; i++) {
     var av = avisos[i];
     if (!av || !av.usuario_id || !av.mensaje) { saltados++; continue; }
@@ -1580,18 +1485,15 @@ app.post("/notificar-tareas", async function(req, res) {
       var rU = await dbTareas.from("usuarios").select("telefono,activo").eq("id", av.usuario_id).maybeSingle();
       if (!rU.data || rU.data.activo === false || !rU.data.telefono) { saltados++; continue; }
       var destino = "whatsapp:" + rU.data.telefono.replace(/[^0-9+]/g, "");
-      await twilioClient.messages.create({
-        from: process.env.TWILIO_WHATSAPP_NUMBER,
-        to: destino,
-        body: av.mensaje
-      });
+      var via = await enviarAvisoTarea(destino, av.mensaje, av.vars);
+      if (via === "plantilla") porPlantilla++;
       enviados++;
     } catch (e) {
       console.error("[NOTIF-TAREAS] Error:", e.message);
       errores.push(e.message);
     }
   }
-  return res.json({ok:true, enviados: enviados, saltados: saltados, errores: errores});
+  return res.json({ok:true, enviados: enviados, porPlantilla: porPlantilla, saltados: saltados, errores: errores});
 });
 
 // ── SISTEMA DE CONFIRMACIÓN ANTES DE GUARDAR ────────────────────
