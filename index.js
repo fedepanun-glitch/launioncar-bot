@@ -28,7 +28,7 @@ var window_ultimoVenc = {};
 var window_pendiente = {};
 
 // ── DIAGNÓSTICO DE ARRANQUE ──
-console.log("=== BOT v6.0 - plantilla aviso_tarea_v2 + limpieza probadores ===");
+console.log("=== BOT v6.1 - avisos siempre por plantilla + estado de entrega ===");
 console.log("Node:", process.version);
 console.log("Tiene fetch global:", typeof fetch !== "undefined");
 console.log("SUPABASE_URL configurado:", !!process.env.SUPABASE_URL);
@@ -1408,37 +1408,37 @@ function varTpl(v, fallback) {
   return s;
 }
 
-// Envia el aviso de tarea. Primero intenta mensaje libre (funciona si el usuario escribio
-// en las ultimas 24hs). Si Twilio lo rechaza por estar fuera de esa ventana, reintenta
-// con la plantilla aprobada (business-initiated).
+// Envia el aviso de tarea SIEMPRE por la plantilla aprobada.
+// Motivo: los avisos son "business-initiated" (el sistema escribe primero), y un mensaje
+// libre solo entra si el usuario escribio en las ultimas 24hs. Twilio ACEPTA el mensaje
+// libre igual (queued) y recien despues falla la entrega, asi que no sirve intentarlo.
+// La plantilla funciona en los dos casos.
 async function enviarAvisoTarea(destino, mensaje, vars) {
+  var v = vars || {};
+  var cv = {
+    "1": varTpl(v.tarea, "Nueva tarea"),
+    "2": varTpl(v.detalle || mensaje, "Ver detalle en el sistema"),
+    "3": varTpl(v.prioridad, "Normal"),
+    "4": varTpl(v.vence, "Sin fecha")
+  };
+  var msg = await twilioClient.messages.create({
+    from: process.env.TWILIO_WHATSAPP_NUMBER,
+    to: destino,
+    contentSid: TEMPLATE_TAREA_SID,
+    contentVariables: JSON.stringify(cv)
+  });
+  return { via: "plantilla", sid: msg.sid, status: msg.status };
+}
+
+// Consulta el estado real de un mensaje ya enviado (para diagnostico).
+// Twilio acepta el envio al instante y entrega despues, asi que el status inicial
+// suele ser "queued"; hay que volver a preguntar unos segundos mas tarde.
+async function estadoMensaje(sid) {
   try {
-    await twilioClient.messages.create({
-      from: process.env.TWILIO_WHATSAPP_NUMBER,
-      to: destino,
-      body: mensaje
-    });
-    return "libre";
+    var m = await twilioClient.messages(sid).fetch();
+    return { status: m.status, errorCode: m.errorCode || null, errorMessage: m.errorMessage || null };
   } catch (e) {
-    var codigo = e && e.code ? String(e.code) : "";
-    var txt = (e && e.message ? e.message : "").toLowerCase();
-    var fueraDeVentana = codigo === "63016" || txt.indexOf("outside") !== -1 || txt.indexOf("freeform") !== -1 || txt.indexOf("24") !== -1;
-    if (!fueraDeVentana) throw e;
-    // Fuera de la ventana de 24hs -> usar plantilla aprobada
-    var v = vars || {};
-    var cv = {
-      "1": varTpl(v.tarea, "Nueva tarea"),
-      "2": varTpl(v.detalle, "Ver detalle en el sistema"),
-      "3": varTpl(v.prioridad, "Normal"),
-      "4": varTpl(v.vence, "Sin fecha")
-    };
-    await twilioClient.messages.create({
-      from: process.env.TWILIO_WHATSAPP_NUMBER,
-      to: destino,
-      contentSid: TEMPLATE_TAREA_SID,
-      contentVariables: JSON.stringify(cv)
-    });
-    return "plantilla";
+    return { status: "desconocido", error: e.message };
   }
 }
 
@@ -1451,12 +1451,26 @@ app.get("/test/aviso", async function(req, res) {
   var destino = req.query.to || process.env.FEDE_WHATSAPP;
   if (!destino) return res.status(400).json({ok:false, error:"Falta FEDE_WHATSAPP en Render o ?to=whatsapp:+549..."});
   try {
-    var via = await enviarAvisoTarea(
+    var r = await enviarAvisoTarea(
       destino,
       "Aviso de prueba del sistema La Union Car.",
       { tarea: "Prueba de notificacion", detalle: "Si recibis esto, los avisos funcionan.", prioridad: "Baja", vence: "Hoy" }
     );
-    res.json({ok:true, enviadoPor: via, destino: destino, templateSid: TEMPLATE_TAREA_SID});
+    // Esperar unos segundos y consultar el estado REAL de entrega
+    await new Promise(function(rr){ setTimeout(rr, 5000); });
+    var est = await estadoMensaje(r.sid);
+    var entregado = (est.status === "delivered" || est.status === "sent" || est.status === "read");
+    res.json({
+      ok: true,
+      enviadoPor: r.via,
+      destino: destino,
+      sid: r.sid,
+      estadoEntrega: est.status,
+      errorCode: est.errorCode,
+      errorMessage: est.errorMessage,
+      diagnostico: entregado ? "OK: el mensaje salio bien" : "OJO: Twilio lo acepto pero el estado no es entregado. Mira errorCode.",
+      templateSid: TEMPLATE_TAREA_SID
+    });
   } catch (e) {
     res.status(500).json({ok:false, error: e.message, code: e.code || null, templateSid: TEMPLATE_TAREA_SID});
   }
@@ -1485,8 +1499,8 @@ app.post("/notificar-tareas", async function(req, res) {
       var rU = await dbTareas.from("usuarios").select("telefono,activo").eq("id", av.usuario_id).maybeSingle();
       if (!rU.data || rU.data.activo === false || !rU.data.telefono) { saltados++; continue; }
       var destino = "whatsapp:" + rU.data.telefono.replace(/[^0-9+]/g, "");
-      var via = await enviarAvisoTarea(destino, av.mensaje, av.vars);
-      if (via === "plantilla") porPlantilla++;
+      var r = await enviarAvisoTarea(destino, av.mensaje, av.vars);
+      if (r && r.via === "plantilla") porPlantilla++;
       enviados++;
     } catch (e) {
       console.error("[NOTIF-TAREAS] Error:", e.message);
