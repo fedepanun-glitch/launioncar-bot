@@ -28,7 +28,7 @@ var window_ultimoVenc = {};
 var window_pendiente = {};
 
 // ── DIAGNÓSTICO DE ARRANQUE ──
-console.log("=== BOT v6.1 - avisos siempre por plantilla + estado de entrega ===");
+console.log("=== BOT v6.2 - consulta de estado de entrega por SID ===");
 console.log("Node:", process.version);
 console.log("Tiene fetch global:", typeof fetch !== "undefined");
 console.log("SUPABASE_URL configurado:", !!process.env.SUPABASE_URL);
@@ -1441,6 +1441,25 @@ async function estadoMensaje(sid) {
     return { status: "desconocido", error: e.message };
   }
 }
+
+// Consultar el estado de un mensaje ya enviado, pasando su SID.
+// Uso: /test/estado?key=CRON_KEY&sid=MMxxxxx
+app.get("/test/estado", async function(req, res) {
+  if (req.query.key !== process.env.CRON_KEY) {
+    return res.status(401).json({ok:false, error:"Unauthorized"});
+  }
+  if (!req.query.sid) return res.status(400).json({ok:false, error:"Falta ?sid=MMxxxx"});
+  var est = await estadoMensaje(req.query.sid);
+  var explica = {
+    queued: "En cola en Twilio, todavia no salio.",
+    sent: "Twilio lo entrego a WhatsApp/Meta. Falta confirmacion de entrega al celular.",
+    delivered: "LLEGO al celular del destinatario.",
+    read: "LLEGO y lo leyeron.",
+    undelivered: "WhatsApp NO pudo entregarlo. Mira el errorCode.",
+    failed: "Fallo el envio. Mira el errorCode."
+  }[est.status] || "Estado no reconocido.";
+  res.json({ok:true, sid:req.query.sid, estado: est.status, errorCode: est.errorCode, errorMessage: est.errorMessage, explicacion: explica});
+});
 
 // Prueba rapida del aviso de tarea (para verificar que la plantilla aprobada funciona).
 // Uso: /test/aviso?key=CRON_KEY   -> te manda un aviso de prueba a FEDE_WHATSAPP
