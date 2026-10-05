@@ -86,6 +86,80 @@ async function sincronizarCuenta(terceroId) {
   return { cuenta: ter[0].nombre, movimientos: izq.length };
 }
 
+
+// ── PLANILLA DE CHEQUES ──────────────────────────────────────────────
+var CHEQUES_SHEET = process.env.CHEQUES_SHEET_ID || '1p6QYiITyrn3FX-pGr3DfNXiZ1Bh5acFi_7E7j4of_b0';
+var ESTADOS_CH = { cartera: 'En cartera', entregado: 'Entregado', depositado: 'Depositado', acreditado: 'Cobrado', rechazado: 'Rechazado', recuperado: 'Recuperado', anulado: 'Anulado' };
+
+async function sincronizarCheques() {
+  var ch = chk(await sb().from('cheques')
+    .select('nro_interno,fecha_recibido,referencia_cliente,numero,banco,fecha_pago,importe,estado,fecha_entregado,tipo,notas,firmante,' +
+            'recibido:terceros!cheques_recibido_de_fkey(nombre),entregado:terceros!cheques_entregado_a_fkey(nombre),traido:terceros!cheques_traido_por_fkey(nombre)')
+    .order('nro_interno', { ascending: true }));
+  var filas = ch.map(function(c) {
+    var notas = [];
+    if(c.tipo === 'echeq') notas.push('E-cheq');
+    if(c.traido) notas.push('Lo trajo ' + c.traido.nombre);
+    if(c.firmante) notas.push('Firmante: ' + c.firmante);
+    if(c.notas) notas.push(c.notas);
+    return [c.nro_interno, c.fecha_recibido ? fechaAR(c.fecha_recibido) : '', c.referencia_cliente || (c.recibido ? c.recibido.nombre : ''),
+            c.recibido ? c.recibido.nombre : '', c.numero || '', c.banco || '', c.fecha_pago ? fechaAR(c.fecha_pago) : '', Number(c.importe),
+            ESTADOS_CH[c.estado] || c.estado, c.fecha_entregado ? fechaAR(c.fecha_entregado) : '', c.entregado ? c.entregado.nombre : '', notas.join(' · ')];
+  });
+  var sh = sheetsCliente();
+  await sh.spreadsheets.values.clear({ spreadsheetId: CHEQUES_SHEET, range: 'Cheques!A7:L3000' });
+  if(filas.length) {
+    await sh.spreadsheets.values.update({ spreadsheetId: CHEQUES_SHEET, range: 'Cheques!A7:L' + (6 + filas.length),
+      valueInputOption: 'USER_ENTERED', requestBody: { values: filas } });
+  }
+  return filas.length;
+}
+
+var esperandoCheques = null;
+function programarCheques() {
+  if(esperandoCheques) clearTimeout(esperandoCheques);
+  esperandoCheques = setTimeout(function() {
+    esperandoCheques = null;
+    sincronizarCheques()
+      .then(function(n) { console.log('📗 Planilla de cheques actualizada (' + n + ' cheques)'); })
+      .catch(function(e) { console.error('❌ Error sincronizando cheques:', e.message); });
+  }, 6000);
+}
+
+// ── LECTURA DE CHEQUES POR FOTO (IA) ─────────────────────────────────
+function postJSON(url, headers, cuerpo) {
+  return new Promise(function(ok, mal) {
+    var u = new URL(url);
+    var datos = JSON.stringify(cuerpo);
+    var req = require('https').request({ hostname: u.hostname, path: u.pathname, method: 'POST',
+      headers: Object.assign({ 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(datos) }, headers) }, function(res) {
+      var t = ''; res.on('data', function(c) { t += c; }); res.on('end', function() {
+        if(res.statusCode >= 300) return mal(new Error('IA ' + res.statusCode + ': ' + t.substring(0, 200)));
+        try { ok(JSON.parse(t)); } catch(e) { mal(e); }
+      });
+    });
+    req.on('error', mal); req.write(datos); req.end();
+  });
+}
+
+var PROMPT_CHEQUE = 'Sos un asistente que lee cheques argentinos (físicos o e-cheq). Mirá la imagen y devolvé SOLO un JSON crudo, sin markdown, con estas claves: ' +
+  '{"tipo":"fisico" o "echeq","banco":"nombre del banco","numero":"número de cheque sin espacios","importe":número sin separadores de miles (usar punto para decimales),' +
+  '"fecha_emision":"AAAA-MM-DD","fecha_pago":"AAAA-MM-DD","firmante":"nombre o razón social del librador","cuit_firmante":"CUIT con guiones","confianza":"alta"/"media"/"baja","observaciones":"lo que no se lea bien"}. ' +
+  'Si un dato no se ve, poné null. En cheques de pago diferido la fecha de pago es la fecha "el ... de ... de ..." o "fecha de pago". Los importes en Argentina usan punto para miles y coma para decimales: convertilos.';
+
+async function leerCheque(base64, mime) {
+  var r = await postJSON('https://api.anthropic.com/v1/messages',
+    { 'x-api-key': process.env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
+    { model: process.env.MODELO_CHEQUES || 'claude-haiku-4-5-20251001', max_tokens: 600,
+      messages: [{ role: 'user', content: [
+        { type: 'image', source: { type: 'base64', media_type: mime || 'image/jpeg', data: base64 } },
+        { type: 'text', text: PROMPT_CHEQUE } ] }] });
+  var texto = (r.content || []).map(function(b) { return b.text || ''; }).join('').trim();
+  texto = texto.replace(/^```(json)?/i, '').replace(/```$/, '').trim();
+  var i = texto.indexOf('{'), j = texto.lastIndexOf('}');
+  return JSON.parse(texto.substring(i, j + 1));
+}
+
 var esperando = {};
 function programar(terceroId) {
   if(!terceroId) return;
@@ -118,10 +192,37 @@ module.exports = function(app) {
     programar(b.destino_tercero_id);
     res.json({ ok: true });
   });
+  app.post('/sync-cheques', function(req, res) {
+    if(req.get('x-sync-secret') !== process.env.SYNC_SECRET) return res.status(401).json({ error: 'no autorizado' });
+    programarCheques();
+    res.json({ ok: true });
+  });
+  app.get('/sync-cheques/ahora', function(req, res) {
+    if(req.query.clave !== process.env.SYNC_SECRET) return res.status(401).json({ error: 'no autorizado' });
+    sincronizarCheques().then(function(n) { res.json({ cheques: n }); }).catch(function(e) { res.status(500).json({ error: e.message }); });
+  });
+  // La app manda la foto como texto (JSON) para no chocar con el límite del parser general
+  app.post('/leer-cheque', express.text({ type: 'text/plain', limit: '15mb' }), async function(req, res) {
+    try {
+      // el token va dentro del cuerpo: así el navegador no hace consulta previa de CORS
+      var b = JSON.parse(req.body || '{}');
+      var u = await sb().auth.getUser(b.token || '');
+      if(u.error || !u.data || !u.data.user) return res.status(401).json({ error: 'Iniciá sesión en la app' });
+      if(!b.imagen) return res.status(400).json({ error: 'Falta la foto' });
+      var datos = await leerCheque(b.imagen, b.mime);
+      res.json({ ok: true, datos: datos });
+    } catch(e) {
+      console.error('❌ Leer cheque:', e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
   app.get('/sync-planilla/todas', function(req, res) {
     if(req.query.clave !== process.env.SYNC_SECRET) return res.status(401).json({ error: 'no autorizado' });
     sincronizarTodas().then(function(r) { res.json(r); }).catch(function(e) { res.status(500).json({ error: e.message }); });
   });
-  setInterval(function() { sincronizarTodas().catch(function(e) { console.error('❌ Sync periódica:', e.message); }); }, 15 * 60 * 1000);
+  setInterval(function() {
+    sincronizarTodas().catch(function(e) { console.error('❌ Sync periódica:', e.message); });
+    sincronizarCheques().catch(function(e) { console.error('❌ Sync cheques:', e.message); });
+  }, 15 * 60 * 1000);
   console.log('📗 Sincronización de planillas CC activa');
 };

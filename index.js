@@ -31,7 +31,7 @@ var window_ultimoVenc = {};
 var window_pendiente = {};
 
 // ── DIAGNÓSTICO DE ARRANQUE ──
-console.log("=== BOT v6.3 - sincronizacion de planillas CC con Drive ===");
+console.log("=== BOT v6.4 - planilla de cheques + lectura de cheques por foto ===");
 console.log("GOOGLE_SERVICE_ACCOUNT_JSON configurado:", !!process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
 console.log("SYNC_SECRET configurado:", !!process.env.SYNC_SECRET);
 console.log("Node:", process.version);
