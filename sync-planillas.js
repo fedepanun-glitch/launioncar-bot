@@ -142,46 +142,28 @@ function postJSON(url, headers, cuerpo) {
   });
 }
 
-var PROMPT_CHEQUE = 'Sos un asistente que lee cheques argentinos (físicos o e-cheq). Mirá la imagen y devolvé SOLO un JSON crudo, sin markdown, con estas claves: ' +
-  '{"tipo":"fisico" o "echeq","banco":"nombre del banco","numero":"número de cheque sin espacios","importe":número sin separadores de miles (usar punto para decimales),' +
-  '"fecha_emision":"AAAA-MM-DD","fecha_pago":"AAAA-MM-DD","firmante":"nombre o razón social del librador","cuit_firmante":"CUIT con guiones","confianza":"alta"/"media"/"baja","observaciones":"lo que no se lea bien"}. ' +
-  'Si un dato no se ve, poné null. En cheques de pago diferido la fecha de pago es la fecha "el ... de ... de ..." o "fecha de pago". Los importes en Argentina usan punto para miles y coma para decimales: convertilos.';
+var PROMPT_CHEQUE = 'Sos un asistente que lee cheques argentinos (físicos o e-cheq). La imagen puede tener UNO O VARIOS cheques. ' +
+  'Sobre cada cheque físico suele haber un NÚMERO INTERNO escrito a mano (un número de 3 o 4 cifras, por ejemplo 1795), que es el número de control de la empresa: no lo confundas con el número del cheque impreso. ' +
+  'Devolvé SOLO un JSON crudo, sin markdown, con esta forma: {"cheques":[{"nro_interno":número escrito a mano o null,"tipo":"fisico" o "echeq","banco":"nombre del banco","numero":"número de cheque impreso, sin espacios",' +
+  '"importe":número sin separadores de miles (punto para decimales),"fecha_emision":"AAAA-MM-DD","fecha_pago":"AAAA-MM-DD","firmante":"nombre o razón social del librador","cuit_firmante":"CUIT con guiones",' +
+  '"confianza":"alta"/"media"/"baja","observaciones":"lo que no se lea bien"}]}. ' +
+  'Un objeto por cada cheque, en el orden en que aparecen (de arriba hacia abajo, de izquierda a derecha). Si un dato no se ve, null. ' +
+  'En cheques de pago diferido la fecha de pago es la del texto "el ... de ... de ..." o "fecha de pago". Los importes argentinos usan punto para miles y coma para decimales: convertilos. ' +
+  'Usá el importe en números y controlalo con el importe en letras si se ve.';
 
-async function leerCheque(base64, mime) {
+async function leerCheques(base64, mime) {
+  var bloque = mime === 'application/pdf'
+    ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } }
+    : { type: 'image', source: { type: 'base64', media_type: mime || 'image/jpeg', data: base64 } };
   var r = await postJSON('https://api.anthropic.com/v1/messages',
     { 'x-api-key': process.env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
-    { model: process.env.MODELO_CHEQUES || 'claude-haiku-4-5-20251001', max_tokens: 600,
-      messages: [{ role: 'user', content: [
-        { type: 'image', source: { type: 'base64', media_type: mime || 'image/jpeg', data: base64 } },
-        { type: 'text', text: PROMPT_CHEQUE } ] }] });
+    { model: process.env.MODELO_CHEQUES || 'claude-sonnet-5-5', max_tokens: 4000,
+      messages: [{ role: 'user', content: [ bloque, { type: 'text', text: PROMPT_CHEQUE } ] }] });
   var texto = (r.content || []).map(function(b) { return b.text || ''; }).join('').trim();
   texto = texto.replace(/^```(json)?/i, '').replace(/```$/, '').trim();
   var i = texto.indexOf('{'), j = texto.lastIndexOf('}');
-  return JSON.parse(texto.substring(i, j + 1));
-}
-
-var esperando = {};
-function programar(terceroId) {
-  if(!terceroId) return;
-  if(esperando[terceroId]) clearTimeout(esperando[terceroId]);
-  esperando[terceroId] = setTimeout(function() {
-    delete esperando[terceroId];
-    sincronizarCuenta(terceroId)
-      .then(function(r) { if(!r.omitida) console.log('📗 Planilla actualizada:', r.cuenta, '(' + r.movimientos + ' movimientos)'); })
-      .catch(function(e) { console.error('❌ Error sincronizando planilla', terceroId, e.message); });
-  }, 6000);
-}
-
-async function sincronizarTodas() {
-  var ters = chk(await sb().from('terceros').select('id,nombre').not('planilla_id', 'is', null));
-  var ok = 0, errores = [];
-  for(var i = 0; i < ters.length; i++) {
-    try { await sincronizarCuenta(ters[i].id); ok++; }
-    catch(e) { errores.push(ters[i].nombre + ': ' + e.message); }
-    await new Promise(function(r) { setTimeout(r, 2500); }); // respeta el límite de Google
-  }
-  console.log('📗 Sincronización completa:', ok, 'planillas', errores.length ? '· errores: ' + errores.join(' | ') : '');
-  return { actualizadas: ok, errores: errores };
+  var obj = JSON.parse(texto.substring(i, j + 1));
+  return Array.isArray(obj.cheques) ? obj.cheques : [obj];
 }
 
 module.exports = function(app) {
@@ -209,8 +191,8 @@ module.exports = function(app) {
       var u = await sb().auth.getUser(b.token || '');
       if(u.error || !u.data || !u.data.user) return res.status(401).json({ error: 'Iniciá sesión en la app' });
       if(!b.imagen) return res.status(400).json({ error: 'Falta la foto' });
-      var datos = await leerCheque(b.imagen, b.mime);
-      res.json({ ok: true, datos: datos });
+      var cheques = await leerCheques(b.imagen, b.mime);
+      res.json({ ok: true, cheques: cheques });
     } catch(e) {
       console.error('❌ Leer cheque:', e.message);
       res.status(500).json({ error: e.message });
