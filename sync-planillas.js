@@ -157,13 +157,34 @@ async function leerCheques(base64, mime) {
     : { type: 'image', source: { type: 'base64', media_type: mime || 'image/jpeg', data: base64 } };
   var r = await postJSON('https://api.anthropic.com/v1/messages',
     { 'x-api-key': process.env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
-    { model: process.env.MODELO_CHEQUES || 'claude-sonnet-5-5', max_tokens: 4000,
+    { model: process.env.MODELO_CHEQUES || 'claude-sonnet-5-5', max_tokens: 8000,
       messages: [{ role: 'user', content: [ bloque, { type: 'text', text: PROMPT_CHEQUE } ] }] });
   var texto = (r.content || []).map(function(b) { return b.text || ''; }).join('').trim();
-  texto = texto.replace(/^```(json)?/i, '').replace(/```$/, '').trim();
-  var i = texto.indexOf('{'), j = texto.lastIndexOf('}');
-  var obj = JSON.parse(texto.substring(i, j + 1));
-  return Array.isArray(obj.cheques) ? obj.cheques : [obj];
+  return parsearCheques(texto);
+}
+
+// Lectura tolerante: si el JSON completo viene mal armado, rescata cada cheque por separado
+function parsearCheques(texto) {
+  var t = String(texto || '').replace(/```(json)?/gi, '').trim();
+  try {
+    var i = t.indexOf('{'), j = t.lastIndexOf('}');
+    var obj = JSON.parse(t.substring(i, j + 1));
+    if(Array.isArray(obj.cheques)) return obj.cheques;
+    if(Array.isArray(obj)) return obj;
+    return [obj];
+  } catch(e) {
+    var lista = [];
+    var partes = t.match(/\{[^{}]*\}/g) || [];
+    partes.forEach(function(p) {
+      try { lista.push(JSON.parse(p)); }
+      catch(e2) {
+        try { lista.push(JSON.parse(p.replace(/,\s*}/g, '}').replace(/:\s*([0-9]{1,3}(\.[0-9]{3})+(,[0-9]+)?)/g, function(m, n) { return ': ' + n.replace(/\./g, '').replace(',', '.'); }))); } catch(e3) {}
+      }
+    });
+    lista = lista.filter(function(c) { return c && (c.importe || c.numero || c.banco); });
+    if(!lista.length) throw new Error('La IA no devolvió datos legibles. Probá con una foto más nítida o con menos cheques');
+    return lista;
+  }
 }
 
 module.exports = function(app) {
