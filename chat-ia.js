@@ -119,6 +119,7 @@ var HERRAMIENTAS = [
       forma_pago: { type: 'string', enum: ['efectivo', 'transferencia', 'deposito', 'cheque', 'echeq', 'compensacion', 'otro'] },
       destino: { type: 'string', description: 'Para pago_a_tercero: a qué cuenta le pagó el cliente. Para cheque_rechazado: proveedor al que se le había entregado (si corresponde).' },
       destino_texto: { type: 'string', description: 'Para pago_a_tercero a alguien que no es cuenta (mecánico, etc.)' },
+      chofer: { type: 'string', description: 'Para pago_a_tercero cuando el cliente le pagó directo a un CHOFER (nombre del chofer): baja la deuda del cliente y queda como adelanto del chofer. También para indicar qué chofer hizo una venta.' },
       con_factura: { type: 'boolean' }, notas: { type: 'string' } } } }
 ];
 
@@ -220,7 +221,14 @@ async function ejecutar(nombre, inp, propuestas, usuario) {
     if(p.importe == null || (inp.tipo !== 'ajuste' && !(p.importe > 0))) return { error: 'Falta el importe (o litros y precio). Preguntáselo al usuario.' };
     if(inp.destino) { var rd = await resolverCuenta(inp.destino); if(rd.error) return rd; p.destino_tercero_id = rd.cuenta.id; p.destino = rd.cuenta.nombre; }
     if(inp.destino_texto) p.destino_texto = inp.destino_texto;
-    if(inp.tipo === 'pago_a_tercero' && !p.destino_tercero_id && !p.destino_texto) return { error: 'Falta a quién le pagó el cliente.' };
+    if(inp.chofer) {
+      var chs = chk(await sb().from('choferes').select('id,nombre,apellido'));
+      var qc = norm(inp.chofer);
+      var ok = chs.filter(function(c) { var n = norm((c.nombre || '') + ' ' + (c.apellido || '')); return n.indexOf(qc) >= 0 || norm(c.nombre) === qc || norm(c.apellido) === qc; });
+      if(ok.length !== 1) return { error: ok.length ? 'Hay varios choferes que coinciden con "' + inp.chofer + '"' : 'No encontré el chofer "' + inp.chofer + '"', opciones: (ok.length ? ok : chs).slice(0, 12).map(function(c) { return ((c.nombre || '') + ' ' + (c.apellido || '')).trim(); }) };
+      p.chofer_id = ok[0].id; p.chofer = ((ok[0].nombre || '') + ' ' + (ok[0].apellido || '')).trim();
+    }
+    if(inp.tipo === 'pago_a_tercero' && !p.destino_tercero_id && !p.destino_texto && !p.chofer_id) return { error: 'Falta a quién le pagó el cliente.' };
     var emp = B.empresas.filter(function(e) { return e.nombre === 'La Unión Car SRL'; })[0];
     p.empresa_id = emp ? emp.id : null;
     p.cuenta_saldo_actual = leerSaldo(rc3.cuenta);
@@ -240,7 +248,7 @@ function sistema(usuario) {
     '4) Para registrar algo usá proponer_operacion. Nunca digas que quedó guardado: decí que preparaste la operación y que la confirme con el botón. Si falta un dato imprescindible, preguntalo en una sola pregunta. ' +
     '5) Interpretá el lenguaje del negocio: "go", "gasoil" = Gasoil; "super" = Nafta Súper; "x10" = X10; "eft"/"efvo" = efectivo; "ch" = cheque; "tr"/"transf" = transferencia; "50 mil" = 50000; "1,5 M" = 1500000. Precios de combustible entre 800 y 4000 por litro. ' +
     '6) Vender a un cliente sin decir cómo pagó = venta en cuenta corriente (sin cobro). Si dice que pagó en el momento, proponé la venta y además el cobro. ' +
-    '7) Si un cliente le pagó directo a un proveedor (ej. "Junes le transfirió 4 M a Copsa"), es pago_a_tercero con cuenta=cliente y destino=proveedor. ' +
+    '7) Si un cliente le pagó directo a un proveedor (ej. "Junes le transfirió 4 M a Copsa"), es pago_a_tercero con cuenta=cliente y destino=proveedor. Si le pagó a un chofer (ej. "San Jaime le transfirió 300 mil a Luis"), es pago_a_tercero con cuenta=cliente y chofer=Luis. ' +
     '8) Los cheques recibidos se cargan desde la sección Cheques con fotos (lee varios cheques y el N° interno); si quieren cargar cheques, indicales eso. ' +
     '9) Antes del 01/10/2026 los datos de ventas están incompletos para algunas cuentas; si consultan meses anteriores, avisalo. ' +
     '10) Sé breve: listas cortas, totales al final. Si piden "más detalle", ampliá.';

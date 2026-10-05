@@ -213,6 +213,87 @@ async function sincronizarTodas() {
   return { actualizadas: ok, errores: errores };
 }
 
+
+// ── PLANILLA "CAMIONES Y CHOFERES" ───────────────────────────────────
+var FLOTA_SHEET = process.env.FLOTA_SHEET_ID || '1eVe1b4JBT3lGPcp5Gad8b8eo5N0ksqKsQbD4eaqJnPA';
+var CATS = ['combustible', 'neumaticos', 'reparacion', 'repuestos', 'lubricantes', 'peaje', 'limpieza', 'otro'];
+var CAT_NOM = { combustible: 'Combustible', neumaticos: 'Neumáticos', reparacion: 'Reparación', repuestos: 'Repuestos', lubricantes: 'Lubricantes', peaje: 'Peaje', limpieza: 'Limpieza', otro: 'Otro',
+  adelanto_sueldo: 'Adelanto', viatico: 'Viático', comida: 'Comida', documentacion: 'Documentación' };
+var MESES = ['', 'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+
+async function sincronizarFlota() {
+  var r = await Promise.all([
+    sb().from('camiones').select('id,codigo,patente,chofer_id').order('codigo'),
+    sb().from('choferes').select('id,nombre,apellido').order('apellido'),
+    sb().from('gastos_camiones').select('camion_id,chofer_id,fecha,categoria,monto,descripcion,proveedor').order('fecha'),
+    sb().from('entregas_choferes').select('chofer_id,fecha,categoria,monto,descripcion').order('fecha'),
+    sb().from('sueldos_choferes').select('chofer_id,mes,anio,total_neto,total_bruto,estado')
+  ]);
+  var cams = chk(r[0]), chofs = chk(r[1]), gastos = chk(r[2]), ents = chk(r[3]), sueldos = chk(r[4]);
+  var nomCh = {}; chofs.forEach(function(c) { nomCh[c.id] = ((c.nombre || '') + ' ' + (c.apellido || '')).trim(); });
+  var camDeCh = {}; cams.forEach(function(c) { if(c.chofer_id) camDeCh[c.chofer_id] = c.id; });
+  var codCam = {}; cams.forEach(function(c) { codCam[c.id] = c.codigo; });
+  var tabs = {};
+  // Resumen: camión x mes x categoría
+  var res = {};
+  gastos.forEach(function(g) {
+    var cid = g.camion_id || camDeCh[g.chofer_id] || 'sin';
+    var k = cid + '|' + g.fecha.slice(0, 7);
+    res[k] = res[k] || { cam: cid, mes: g.fecha.slice(0, 7), cats: {} , total: 0 };
+    var cat = CATS.indexOf(g.categoria) >= 0 ? g.categoria : 'otro';
+    res[k].cats[cat] = (res[k].cats[cat] || 0) + Number(g.monto); res[k].total += Number(g.monto);
+  });
+  var filasRes = [['GASTOS POR CAMIÓN Y POR MES (se completa solo desde la app)'], [], ['Camión', 'Mes'].concat(CATS.map(function(c) { return CAT_NOM[c]; })).concat(['Total gastos'])];
+  Object.keys(res).map(function(k) { return res[k]; }).sort(function(a, b) { return (codCam[a.cam] || 'zz') < (codCam[b.cam] || 'zz') ? -1 : (codCam[a.cam] || 'zz') > (codCam[b.cam] || 'zz') ? 1 : (a.mes < b.mes ? 1 : -1); })
+    .forEach(function(x) { filasRes.push([codCam[x.cam] || 'Sin camión', MESES[Number(x.mes.slice(5))] + ' ' + x.mes.slice(0, 4)].concat(CATS.map(function(c) { return x.cats[c] || ''; })).concat([x.total])); });
+  tabs['Resumen'] = filasRes;
+  // Un tab por camión con el detalle
+  cams.forEach(function(c) {
+    var f = [['Camión ' + c.codigo + (c.patente ? ' · ' + c.patente : ''), '', 'Chofer actual: ' + (nomCh[c.chofer_id] || '—')], [], ['Fecha', 'Categoría', 'Descripción', 'Proveedor / taller', 'Chofer', 'Monto']];
+    var tot = 0;
+    gastos.filter(function(g) { return (g.camion_id || camDeCh[g.chofer_id]) === c.id; }).forEach(function(g) {
+      tot += Number(g.monto);
+      f.push([fechaAR(g.fecha), CAT_NOM[g.categoria] || g.categoria || '', g.descripcion || '', g.proveedor || '', nomCh[g.chofer_id] || '', Number(g.monto)]);
+    });
+    f.push([], ['', '', '', '', 'TOTAL', tot]);
+    tabs['Camión ' + c.codigo] = f;
+  });
+  // Un tab por chofer: entregas, gastos que rindió y sueldos liquidados
+  chofs.forEach(function(ch) {
+    var movs = [];
+    ents.filter(function(e) { return e.chofer_id === ch.id; }).forEach(function(e) { movs.push([e.fecha, 'Entrega', CAT_NOM[e.categoria] || e.categoria, e.descripcion || '', Number(e.monto), '', '']); });
+    gastos.filter(function(g) { return g.chofer_id === ch.id; }).forEach(function(g) { movs.push([g.fecha, 'Gasto (' + (codCam[g.camion_id || camDeCh[ch.id]] || 's/camión') + ')', CAT_NOM[g.categoria] || g.categoria, g.descripcion || '', '', Number(g.monto), '']); });
+    sueldos.filter(function(s) { return s.chofer_id === ch.id; }).forEach(function(s) { var d = s.anio + '-' + ('0' + s.mes).slice(-2) + '-28'; movs.push([d, 'Sueldo', MESES[s.mes] + ' ' + s.anio + (s.estado ? ' (' + s.estado + ')' : ''), '', '', '', Number(s.total_bruto || s.total_neto || 0)]); });
+    if(!movs.length) return;
+    movs.sort(function(a, b) { return a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0; });
+    var f = [['Chofer ' + nomCh[ch.id], '', 'Camión: ' + (codCam[camDeCh[ch.id]] || '—')], [], ['Fecha', 'Movimiento', 'Categoría', 'Detalle', 'Entregado ($ para él)', 'Gastos que rindió', 'Sueldo liquidado']];
+    var t = [0, 0, 0];
+    movs.forEach(function(m) { t[0] += Number(m[4] || 0); t[1] += Number(m[5] || 0); t[2] += Number(m[6] || 0); m[0] = fechaAR(m[0]); f.push(m); });
+    f.push([], ['', '', '', 'TOTALES', t[0], t[1], t[2]]);
+    tabs['Chofer ' + nomCh[ch.id]] = f;
+  });
+  var sh = sheetsCliente();
+  var info = await sh.spreadsheets.get({ spreadsheetId: FLOTA_SHEET, fields: 'sheets.properties.title' });
+  var existentes = (info.data.sheets || []).map(function(x) { return x.properties.title; });
+  var nuevas = Object.keys(tabs).filter(function(t) { return existentes.indexOf(t) < 0; });
+  if(nuevas.length) await sh.spreadsheets.batchUpdate({ spreadsheetId: FLOTA_SHEET, requestBody: { requests: nuevas.map(function(t) { return { addSheet: { properties: { title: t } } }; }) } });
+  var titulos = Object.keys(tabs);
+  await sh.spreadsheets.values.batchClear({ spreadsheetId: FLOTA_SHEET, requestBody: { ranges: titulos.map(function(t) { return "'" + t + "'!A1:Z5000"; }) } });
+  await sh.spreadsheets.values.batchUpdate({ spreadsheetId: FLOTA_SHEET, requestBody: { valueInputOption: 'USER_ENTERED',
+    data: titulos.map(function(t) { return { range: "'" + t + "'!A1", values: tabs[t] }; }) } });
+  return { pestanas: titulos.length, gastos: gastos.length, entregas: ents.length };
+}
+
+var esperandoFlota = null;
+function programarFlota() {
+  if(esperandoFlota) clearTimeout(esperandoFlota);
+  esperandoFlota = setTimeout(function() {
+    esperandoFlota = null;
+    sincronizarFlota().then(function(r) { console.log('📗 Planilla de camiones y choferes actualizada', JSON.stringify(r)); })
+      .catch(function(e) { console.error('❌ Error planilla de camiones y choferes:', e.message); });
+  }, 8000);
+}
+
 module.exports = function(app) {
   app.post('/sync-planilla', express.json(), function(req, res) {
     if(req.get('x-sync-secret') !== process.env.SYNC_SECRET) return res.status(401).json({ error: 'no autorizado' });
@@ -229,8 +310,18 @@ module.exports = function(app) {
       if(u.error || !u.data || !u.data.user) return res.status(401).json({ error: 'no autorizado' });
       (b.terceros || []).forEach(function(id) { programar(id); });
       if(b.cheques) programarCheques();
+      if(b.flota) programarFlota();
       res.json({ ok: true });
     } catch(e) { res.status(500).json({ error: e.message }); }
+  });
+  app.post('/sync-flota', function(req, res) {
+    if(req.get('x-sync-secret') !== process.env.SYNC_SECRET) return res.status(401).json({ error: 'no autorizado' });
+    programarFlota();
+    res.json({ ok: true });
+  });
+  app.get('/sync-flota/ahora', function(req, res) {
+    if(req.query.clave !== process.env.SYNC_SECRET) return res.status(401).json({ error: 'no autorizado' });
+    sincronizarFlota().then(function(r) { res.json(r); }).catch(function(e) { res.status(500).json({ error: e.message }); });
   });
   app.post('/sync-cheques', function(req, res) {
     if(req.get('x-sync-secret') !== process.env.SYNC_SECRET) return res.status(401).json({ error: 'no autorizado' });
@@ -263,6 +354,7 @@ module.exports = function(app) {
   setInterval(function() {
     sincronizarTodas().catch(function(e) { console.error('❌ Sync periódica:', e.message); });
     sincronizarCheques().catch(function(e) { console.error('❌ Sync cheques:', e.message); });
+    sincronizarFlota().catch(function(e) { console.error('❌ Sync camiones y choferes:', e.message); });
   }, 15 * 60 * 1000);
   console.log('📗 Sincronización de planillas CC activa');
 };
