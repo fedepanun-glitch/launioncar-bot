@@ -13,6 +13,9 @@ app.use(function(req, res, next) {
   next();
 });
 var db = supabase.createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
+
+// Sincronización de las planillas CC de Drive con las cuentas corrientes de la app
+require("./sync-planillas")(app);
 var twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 
 // Cliente Supabase del proyecto de TAREAS (separado de La Union Car)
@@ -28,7 +31,9 @@ var window_ultimoVenc = {};
 var window_pendiente = {};
 
 // ── DIAGNÓSTICO DE ARRANQUE ──
-console.log("=== BOT v6.2 - consulta de estado de entrega por SID ===");
+console.log("=== BOT v6.3 - sincronizacion de planillas CC con Drive ===");
+console.log("GOOGLE_SERVICE_ACCOUNT_JSON configurado:", !!process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
+console.log("SYNC_SECRET configurado:", !!process.env.SYNC_SECRET);
 console.log("Node:", process.version);
 console.log("Tiene fetch global:", typeof fetch !== "undefined");
 console.log("SUPABASE_URL configurado:", !!process.env.SUPABASE_URL);
