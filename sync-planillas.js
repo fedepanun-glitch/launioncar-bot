@@ -187,6 +187,32 @@ function parsearCheques(texto) {
   }
 }
 
+
+// ── Cola de actualización de planillas CC (espera unos segundos por si llegan varios avisos juntos) ──
+var esperando = {};
+function programar(terceroId) {
+  if(!terceroId) return;
+  if(esperando[terceroId]) clearTimeout(esperando[terceroId]);
+  esperando[terceroId] = setTimeout(function() {
+    delete esperando[terceroId];
+    sincronizarCuenta(terceroId)
+      .then(function(r) { if(!r.omitida) console.log('📗 Planilla actualizada:', r.cuenta, '(' + r.movimientos + ' movimientos)'); })
+      .catch(function(e) { console.error('❌ Error sincronizando planilla', terceroId, e.message); });
+  }, 6000);
+}
+
+async function sincronizarTodas() {
+  var ters = chk(await sb().from('terceros').select('id,nombre').not('planilla_id', 'is', null));
+  var ok = 0, errores = [];
+  for(var i = 0; i < ters.length; i++) {
+    try { await sincronizarCuenta(ters[i].id); ok++; }
+    catch(e) { errores.push(ters[i].nombre + ': ' + e.message); }
+    await new Promise(function(r) { setTimeout(r, 2500); }); // respeta el límite de Google
+  }
+  console.log('📗 Sincronización completa:', ok, 'planillas', errores.length ? '· errores: ' + errores.join(' | ') : '');
+  return { actualizadas: ok, errores: errores };
+}
+
 module.exports = function(app) {
   app.post('/sync-planilla', express.json(), function(req, res) {
     if(req.get('x-sync-secret') !== process.env.SYNC_SECRET) return res.status(401).json({ error: 'no autorizado' });
@@ -194,6 +220,17 @@ module.exports = function(app) {
     programar(b.tercero_id);
     programar(b.destino_tercero_id);
     res.json({ ok: true });
+  });
+  // Aviso desde la app (con la sesión del usuario): actualiza las cuentas y/o cheques indicados
+  app.post('/sync-cuenta', express.text({ type: 'text/plain', limit: '200kb' }), async function(req, res) {
+    try {
+      var b = JSON.parse(req.body || '{}');
+      var u = await sb().auth.getUser(b.token || '');
+      if(u.error || !u.data || !u.data.user) return res.status(401).json({ error: 'no autorizado' });
+      (b.terceros || []).forEach(function(id) { programar(id); });
+      if(b.cheques) programarCheques();
+      res.json({ ok: true });
+    } catch(e) { res.status(500).json({ error: e.message }); }
   });
   app.post('/sync-cheques', function(req, res) {
     if(req.get('x-sync-secret') !== process.env.SYNC_SECRET) return res.status(401).json({ error: 'no autorizado' });
