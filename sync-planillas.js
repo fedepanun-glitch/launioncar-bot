@@ -216,72 +216,186 @@ async function sincronizarTodas() {
 
 // ── PLANILLA "CAMIONES Y CHOFERES" ───────────────────────────────────
 var FLOTA_SHEET = process.env.FLOTA_SHEET_ID || '1eVe1b4JBT3lGPcp5Gad8b8eo5N0ksqKsQbD4eaqJnPA';
+
+// ── Arma una hoja con formato a partir de filas "con estilo" ──
+// cada fila: { v: [valores], t: 'titulo' | 'sub' | 'seccion' | 'cab' | 'mes' | 'total' | null }
+function armarFormato(sheetId, filas, anchos, colsPesos) {
+  var req = [{ repeatCell: { range: { sheetId: sheetId }, cell: { userEnteredFormat: {} }, fields: 'userEnteredFormat' } }];
+  var ncol = anchos.length;
+  var rango = function(r) { return { sheetId: sheetId, startRowIndex: r, endRowIndex: r + 1, startColumnIndex: 0, endColumnIndex: ncol }; };
+  var color = function(r, g, b) { return { red: r, green: g, blue: b }; };
+  filas.forEach(function(f, r) {
+    if(f.t === 'titulo') req.push({ repeatCell: { range: rango(r), cell: { userEnteredFormat: { textFormat: { bold: true, fontSize: 15 } } }, fields: 'userEnteredFormat.textFormat' } });
+    if(f.t === 'sub') req.push({ repeatCell: { range: rango(r), cell: { userEnteredFormat: { textFormat: { italic: true, foregroundColor: color(0.4, 0.4, 0.4) } } }, fields: 'userEnteredFormat.textFormat' } });
+    if(f.t === 'seccion') req.push({ repeatCell: { range: rango(r), cell: { userEnteredFormat: { textFormat: { bold: true, fontSize: 12, foregroundColor: color(0.12, 0.22, 0.39) } } }, fields: 'userEnteredFormat.textFormat' } });
+    if(f.t === 'cab') req.push({ repeatCell: { range: rango(r), cell: { userEnteredFormat: { backgroundColor: color(0.12, 0.22, 0.39), textFormat: { bold: true, foregroundColor: color(1, 1, 1) }, wrapStrategy: 'WRAP', verticalAlignment: 'MIDDLE' } }, fields: 'userEnteredFormat(backgroundColor,textFormat,wrapStrategy,verticalAlignment)' } });
+    if(f.t === 'mes') req.push({ repeatCell: { range: rango(r), cell: { userEnteredFormat: { backgroundColor: color(0.86, 0.9, 0.96), textFormat: { bold: true, fontSize: 11 } } }, fields: 'userEnteredFormat(backgroundColor,textFormat)' } });
+    if(f.t === 'total') req.push({ repeatCell: { range: rango(r), cell: { userEnteredFormat: { backgroundColor: color(0.95, 0.95, 0.95), textFormat: { bold: true }, borders: { top: { style: 'SOLID' } } } }, fields: 'userEnteredFormat(backgroundColor,textFormat,borders)' } });
+    if(f.t === 'pendiente') req.push({ repeatCell: { range: rango(r), cell: { userEnteredFormat: { backgroundColor: color(1, 0.95, 0.8) } }, fields: 'userEnteredFormat.backgroundColor' } });
+  });
+  colsPesos.forEach(function(c) {
+    req.push({ repeatCell: { range: { sheetId: sheetId, startRowIndex: 0, endRowIndex: filas.length, startColumnIndex: c, endColumnIndex: c + 1 },
+      cell: { userEnteredFormat: { numberFormat: { type: 'CURRENCY', pattern: '"$"#,##0.00;-"$"#,##0.00;""' }, horizontalAlignment: 'RIGHT' } }, fields: 'userEnteredFormat(numberFormat,horizontalAlignment)' } });
+  });
+  anchos.forEach(function(w, c) { req.push({ updateDimensionProperties: { range: { sheetId: sheetId, dimension: 'COLUMNS', startIndex: c, endIndex: c + 1 }, properties: { pixelSize: w }, fields: 'pixelSize' } }); });
+  return req;
+}
+
+// Escribe una hoja (la primera del archivo, o la pestaña indicada) con sus valores y formato
+async function escribirHoja(sh, spreadsheetId, filas, anchos, colsPesos, titulo) {
+  var info = await sh.spreadsheets.get({ spreadsheetId: spreadsheetId, fields: 'properties.locale,sheets.properties(sheetId,title)' });
+  var hojas = info.data.sheets || [], hoja = null, pre = [];
+  if(titulo) {
+    hoja = hojas.filter(function(x) { return x.properties.title === titulo; })[0];
+    if(!hoja) {
+      var add = await sh.spreadsheets.batchUpdate({ spreadsheetId: spreadsheetId, requestBody: { requests: [{ addSheet: { properties: { title: titulo } } }] } });
+      hoja = { properties: add.data.replies[0].addSheet.properties };
+    }
+  } else {
+    hoja = hojas[0];
+    if(hoja.properties.title !== 'Cuenta') pre.push({ updateSheetProperties: { properties: { sheetId: hoja.properties.sheetId, title: 'Cuenta' }, fields: 'title' } });
+  }
+  if(info.data.properties.locale !== 'es_AR') pre.push({ updateSpreadsheetProperties: { properties: { locale: 'es_AR', timeZone: 'America/Argentina/Buenos_Aires' }, fields: 'locale,timeZone' } });
+  var nombre = titulo || 'Cuenta';
+  await sh.spreadsheets.values.clear({ spreadsheetId: spreadsheetId, range: "'" + (pre.length && !titulo ? hoja.properties.title : nombre) + "'!A1:Z5000" });
+  var req = pre.concat(armarFormato(hoja.properties.sheetId, filas, anchos, colsPesos));
+  await sh.spreadsheets.batchUpdate({ spreadsheetId: spreadsheetId, requestBody: { requests: req } });
+  await sh.spreadsheets.values.update({ spreadsheetId: spreadsheetId, range: "'" + nombre + "'!A1", valueInputOption: 'USER_ENTERED',
+    requestBody: { values: filas.map(function(f) { return f.v; }) } });
+  return hoja.properties.sheetId;
+}
+
 var CATS = ['combustible', 'neumaticos', 'reparacion', 'repuestos', 'lubricantes', 'peaje', 'limpieza', 'otro'];
 var CAT_NOM = { combustible: 'Combustible', neumaticos: 'Neumáticos', reparacion: 'Reparación', repuestos: 'Repuestos', lubricantes: 'Lubricantes', peaje: 'Peaje', limpieza: 'Limpieza', otro: 'Otro',
   adelanto_sueldo: 'Adelanto', viatico: 'Viático', comida: 'Comida', documentacion: 'Documentación' };
 var MESES = ['', 'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+function nomMes(k) { return MESES[Number(k.slice(5, 7))] + ' ' + k.slice(0, 4); }
+function ahoraAR() { var d = new Date(Date.now() - 3 * 3600 * 1000); return d.toISOString().slice(8, 10) + '/' + d.toISOString().slice(5, 7) + '/' + d.toISOString().slice(0, 4) + ' ' + d.toISOString().slice(11, 16); }
+var ESTADO_SUELDO = { pagado: 'Liquidado y pagado', pendiente: 'Liquidado, falta pagar', calculado: 'Calculado' };
+
+function filasChofer(ch, nombre, camion, ents, gastos, sueldos) {
+  var meses = {};
+  var m = function(k) { return meses[k] = meses[k] || { ent: [], gas: [], ent$: 0, gas$: 0, sueldo: null, estado: null }; };
+  ents.forEach(function(e) { var x = m(e.fecha.slice(0, 7)); x.ent.push(e); x.ent$ += Number(e.monto); });
+  gastos.forEach(function(g) { var x = m(g.fecha.slice(0, 7)); x.gas.push(g); x.gas$ += Number(g.monto); });
+  sueldos.forEach(function(s) { var x = m(s.anio + '-' + ('0' + s.mes).slice(-2)); x.sueldo = Number(s.total_bruto || s.total_neto || 0); x.estado = s.estado; });
+  var claves = Object.keys(meses).sort().reverse();
+  var F = [];
+  F.push({ v: ['Cuenta del chofer: ' + nombre], t: 'titulo' });
+  F.push({ v: ['Camión: ' + (camion || 'sin asignar') + '  ·  Actualizado ' + ahoraAR() + '  ·  Se completa sola desde la app: no editar acá'], t: 'sub' });
+  F.push({ v: [] });
+  F.push({ v: ['RESUMEN POR MES (para liquidar)'], t: 'seccion' });
+  F.push({ v: ['Mes', 'Adelantos y entregas', 'Gastos que pagó el chofer', 'Sueldo liquidado', 'Saldo a pagar al chofer (sueldo − adelantos)', 'Estado'], t: 'cab' });
+  claves.forEach(function(k) {
+    var x = meses[k];
+    F.push({ v: [nomMes(k), x.ent$, x.gas$, x.sueldo === null ? '' : x.sueldo, x.sueldo === null ? '' : x.sueldo - x.ent$, x.sueldo === null ? 'Sin liquidar' : (ESTADO_SUELDO[x.estado] || x.estado || 'Liquidado')], t: x.sueldo === null ? 'pendiente' : null });
+  });
+  F.push({ v: [] });
+  F.push({ v: ['DETALLE POR MES'], t: 'seccion' });
+  claves.forEach(function(k) {
+    var x = meses[k];
+    F.push({ v: [nomMes(k).toUpperCase()], t: 'mes' });
+    F.push({ v: ['Fecha', 'Movimiento', 'Categoría', 'Detalle', 'Entregado al chofer', 'Gasto que pagó'], t: 'cab' });
+    var movs = x.ent.map(function(e) { return [e.fecha, 'Entrega', CAT_NOM[e.categoria] || e.categoria || '', e.descripcion || '', Number(e.monto), '']; })
+      .concat(x.gas.map(function(g) { return [g.fecha, 'Gasto', CAT_NOM[g.categoria] || g.categoria || '', g.descripcion || '', '', Number(g.monto)]; }));
+    movs.sort(function(a, b) { return a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0; });
+    movs.forEach(function(r) { r[0] = fechaAR(r[0]); F.push({ v: r }); });
+    F.push({ v: ['Total ' + nomMes(k).toLowerCase(), '', '', '', x.ent$, x.gas$], t: 'total' });
+    if(x.sueldo !== null) F.push({ v: ['Sueldo liquidado: ' + x.sueldo.toLocaleString('es-AR') + '  →  saldo a pagar: ' + (x.sueldo - x.ent$).toLocaleString('es-AR')], t: 'sub' });
+    F.push({ v: [] });
+  });
+  if(!claves.length) F.push({ v: ['Todavía no hay movimientos cargados.'] });
+  return F;
+}
+
+function filasCamion(c, chofer, gastos) {
+  var meses = {};
+  gastos.forEach(function(g) { var k = g.fecha.slice(0, 7); var x = meses[k] = meses[k] || { lista: [], cats: {}, total: 0 }; x.lista.push(g);
+    var cat = CATS.indexOf(g.categoria) >= 0 ? g.categoria : 'otro'; x.cats[cat] = (x.cats[cat] || 0) + Number(g.monto); x.total += Number(g.monto); });
+  var claves = Object.keys(meses).sort().reverse();
+  var F = [];
+  F.push({ v: ['Camión ' + c.codigo + (c.patente ? ' · ' + c.patente : '')], t: 'titulo' });
+  F.push({ v: ['Chofer actual: ' + (chofer || 'sin asignar') + '  ·  Actualizado ' + ahoraAR() + '  ·  Se completa sola desde la app: no editar acá'], t: 'sub' });
+  F.push({ v: [] });
+  F.push({ v: ['RESUMEN DE GASTOS POR MES'], t: 'seccion' });
+  F.push({ v: ['Mes'].concat(CATS.map(function(k) { return CAT_NOM[k]; })).concat(['Total del mes']), t: 'cab' });
+  claves.forEach(function(k) { var x = meses[k]; F.push({ v: [nomMes(k)].concat(CATS.map(function(cat) { return x.cats[cat] || ''; })).concat([x.total]) }); });
+  F.push({ v: [] });
+  F.push({ v: ['DETALLE POR MES'], t: 'seccion' });
+  claves.forEach(function(k) {
+    var x = meses[k];
+    F.push({ v: [nomMes(k).toUpperCase()], t: 'mes' });
+    F.push({ v: ['Fecha', 'Categoría', 'Descripción', 'Proveedor / taller', 'Chofer', 'Monto'], t: 'cab' });
+    x.lista.sort(function(a, b) { return a.fecha < b.fecha ? -1 : 1; }).forEach(function(g) {
+      F.push({ v: [fechaAR(g.fecha), CAT_NOM[g.categoria] || g.categoria || '', g.descripcion || '', g.proveedor || '', g._chofer || '', Number(g.monto)] });
+    });
+    F.push({ v: ['Total ' + nomMes(k).toLowerCase(), '', '', '', '', x.total], t: 'total' });
+    F.push({ v: [] });
+  });
+  if(!claves.length) F.push({ v: ['Todavía no hay gastos cargados para este camión.'] });
+  return F;
+}
 
 async function sincronizarFlota() {
   var r = await Promise.all([
-    sb().from('camiones').select('id,codigo,patente,chofer_id').order('codigo'),
-    sb().from('choferes').select('id,nombre,apellido').order('apellido'),
+    sb().from('camiones').select('id,codigo,patente,chofer_id,planilla_id').order('codigo'),
+    sb().from('choferes').select('id,nombre,apellido,planilla_id').order('apellido'),
     sb().from('gastos_camiones').select('camion_id,chofer_id,fecha,categoria,monto,descripcion,proveedor').order('fecha'),
     sb().from('entregas_choferes').select('chofer_id,fecha,categoria,monto,descripcion').order('fecha'),
     sb().from('sueldos_choferes').select('chofer_id,mes,anio,total_neto,total_bruto,estado')
   ]);
   var cams = chk(r[0]), chofs = chk(r[1]), gastos = chk(r[2]), ents = chk(r[3]), sueldos = chk(r[4]);
-  var nomCh = {}; chofs.forEach(function(c) { nomCh[c.id] = ((c.nombre || '') + ' ' + (c.apellido || '')).trim(); });
+  var nomCh = {}; chofs.forEach(function(c) { nomCh[c.id] = ((c.nombre || '') + ' ' + (c.apellido || '')).replace(/\s+/g, ' ').trim(); });
   var camDeCh = {}; cams.forEach(function(c) { if(c.chofer_id) camDeCh[c.chofer_id] = c.id; });
   var codCam = {}; cams.forEach(function(c) { codCam[c.id] = c.codigo; });
-  var tabs = {};
-  // Resumen: camión x mes x categoría
-  var res = {};
-  gastos.forEach(function(g) {
-    var cid = g.camion_id || camDeCh[g.chofer_id] || 'sin';
-    var k = cid + '|' + g.fecha.slice(0, 7);
-    res[k] = res[k] || { cam: cid, mes: g.fecha.slice(0, 7), cats: {} , total: 0 };
-    var cat = CATS.indexOf(g.categoria) >= 0 ? g.categoria : 'otro';
-    res[k].cats[cat] = (res[k].cats[cat] || 0) + Number(g.monto); res[k].total += Number(g.monto);
-  });
-  var filasRes = [['GASTOS POR CAMIÓN Y POR MES (se completa solo desde la app)'], [], ['Camión', 'Mes'].concat(CATS.map(function(c) { return CAT_NOM[c]; })).concat(['Total gastos'])];
-  Object.keys(res).map(function(k) { return res[k]; }).sort(function(a, b) { return (codCam[a.cam] || 'zz') < (codCam[b.cam] || 'zz') ? -1 : (codCam[a.cam] || 'zz') > (codCam[b.cam] || 'zz') ? 1 : (a.mes < b.mes ? 1 : -1); })
-    .forEach(function(x) { filasRes.push([codCam[x.cam] || 'Sin camión', MESES[Number(x.mes.slice(5))] + ' ' + x.mes.slice(0, 4)].concat(CATS.map(function(c) { return x.cats[c] || ''; })).concat([x.total])); });
-  tabs['Resumen'] = filasRes;
-  // Un tab por camión con el detalle
-  cams.forEach(function(c) {
-    var f = [['Camión ' + c.codigo + (c.patente ? ' · ' + c.patente : ''), '', 'Chofer actual: ' + (nomCh[c.chofer_id] || '—')], [], ['Fecha', 'Categoría', 'Descripción', 'Proveedor / taller', 'Chofer', 'Monto']];
-    var tot = 0;
-    gastos.filter(function(g) { return (g.camion_id || camDeCh[g.chofer_id]) === c.id; }).forEach(function(g) {
-      tot += Number(g.monto);
-      f.push([fechaAR(g.fecha), CAT_NOM[g.categoria] || g.categoria || '', g.descripcion || '', g.proveedor || '', nomCh[g.chofer_id] || '', Number(g.monto)]);
-    });
-    f.push([], ['', '', '', '', 'TOTAL', tot]);
-    tabs['Camión ' + c.codigo] = f;
-  });
-  // Un tab por chofer: entregas, gastos que rindió y sueldos liquidados
+  gastos.forEach(function(g) { g._cam = g.camion_id || camDeCh[g.chofer_id] || null; g._chofer = nomCh[g.chofer_id] || ''; });
+  var sh = sheetsCliente(), hechas = 0, errores = [];
+  var pausa = function() { return new Promise(function(ok) { setTimeout(ok, 1500); }); };
+  // 1) un archivo por chofer
+  for(var i = 0; i < chofs.length; i++) {
+    var ch = chofs[i]; if(!ch.planilla_id) continue;
+    try {
+      var F = filasChofer(ch, nomCh[ch.id], codCam[camDeCh[ch.id]], ents.filter(function(e) { return e.chofer_id === ch.id; }), gastos.filter(function(g) { return g.chofer_id === ch.id; }), sueldos.filter(function(s) { return s.chofer_id === ch.id; }));
+      await escribirHoja(sh, ch.planilla_id, F, [190, 150, 160, 260, 170, 160], [1, 2, 3, 4, 5]);
+      hechas++;
+    } catch(e) { errores.push(nomCh[ch.id] + ': ' + e.message); }
+    await pausa();
+  }
+  // 2) un archivo por camión
+  for(var j = 0; j < cams.length; j++) {
+    var c = cams[j]; if(!c.planilla_id) continue;
+    try {
+      await escribirHoja(sh, c.planilla_id, filasCamion(c, nomCh[c.chofer_id], gastos.filter(function(g) { return g._cam === c.id; })), [150, 110, 110, 110, 110, 110, 110, 110, 110, 130], [1, 2, 3, 4, 5, 6, 7, 8, 9]);
+      hechas++;
+    } catch(e) { errores.push(c.codigo + ': ' + e.message); }
+    await pausa();
+  }
+  // 3) tablero general: todos los choferes y todos los camiones por mes
+  var RC = [{ v: ['Choferes: resumen por mes'], t: 'titulo' }, { v: ['Actualizado ' + ahoraAR() + ' · el detalle de cada uno está en la carpeta "Choferes"'], t: 'sub' }, { v: [] },
+            { v: ['Chofer', 'Mes', 'Adelantos y entregas', 'Gastos que pagó', 'Sueldo liquidado', 'Saldo a pagar'], t: 'cab' }];
   chofs.forEach(function(ch) {
-    var movs = [];
-    ents.filter(function(e) { return e.chofer_id === ch.id; }).forEach(function(e) { movs.push([e.fecha, 'Entrega', CAT_NOM[e.categoria] || e.categoria, e.descripcion || '', Number(e.monto), '', '']); });
-    gastos.filter(function(g) { return g.chofer_id === ch.id; }).forEach(function(g) { movs.push([g.fecha, 'Gasto (' + (codCam[g.camion_id || camDeCh[ch.id]] || 's/camión') + ')', CAT_NOM[g.categoria] || g.categoria, g.descripcion || '', '', Number(g.monto), '']); });
-    sueldos.filter(function(s) { return s.chofer_id === ch.id; }).forEach(function(s) { var d = s.anio + '-' + ('0' + s.mes).slice(-2) + '-28'; movs.push([d, 'Sueldo', MESES[s.mes] + ' ' + s.anio + (s.estado ? ' (' + s.estado + ')' : ''), '', '', '', Number(s.total_bruto || s.total_neto || 0)]); });
-    if(!movs.length) return;
-    movs.sort(function(a, b) { return a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0; });
-    var f = [['Chofer ' + nomCh[ch.id], '', 'Camión: ' + (codCam[camDeCh[ch.id]] || '—')], [], ['Fecha', 'Movimiento', 'Categoría', 'Detalle', 'Entregado ($ para él)', 'Gastos que rindió', 'Sueldo liquidado']];
-    var t = [0, 0, 0];
-    movs.forEach(function(m) { t[0] += Number(m[4] || 0); t[1] += Number(m[5] || 0); t[2] += Number(m[6] || 0); m[0] = fechaAR(m[0]); f.push(m); });
-    f.push([], ['', '', '', 'TOTALES', t[0], t[1], t[2]]);
-    tabs['Chofer ' + nomCh[ch.id]] = f;
+    var meses = {};
+    ents.forEach(function(e) { if(e.chofer_id === ch.id) { var k = e.fecha.slice(0, 7); meses[k] = meses[k] || [0, 0, null]; meses[k][0] += Number(e.monto); } });
+    gastos.forEach(function(g) { if(g.chofer_id === ch.id) { var k = g.fecha.slice(0, 7); meses[k] = meses[k] || [0, 0, null]; meses[k][1] += Number(g.monto); } });
+    sueldos.forEach(function(s) { if(s.chofer_id === ch.id) { var k = s.anio + '-' + ('0' + s.mes).slice(-2); meses[k] = meses[k] || [0, 0, null]; meses[k][2] = Number(s.total_bruto || s.total_neto || 0); } });
+    Object.keys(meses).sort().reverse().slice(0, 6).forEach(function(k) { var x = meses[k]; RC.push({ v: [nomCh[ch.id], nomMes(k), x[0], x[1], x[2] === null ? '' : x[2], x[2] === null ? 'Sin liquidar' : x[2] - x[0]], t: x[2] === null ? 'pendiente' : null }); });
   });
-  var sh = sheetsCliente();
-  var info = await sh.spreadsheets.get({ spreadsheetId: FLOTA_SHEET, fields: 'sheets.properties.title' });
-  var existentes = (info.data.sheets || []).map(function(x) { return x.properties.title; });
-  var nuevas = Object.keys(tabs).filter(function(t) { return existentes.indexOf(t) < 0; });
-  if(nuevas.length) await sh.spreadsheets.batchUpdate({ spreadsheetId: FLOTA_SHEET, requestBody: { requests: nuevas.map(function(t) { return { addSheet: { properties: { title: t } } }; }) } });
-  var titulos = Object.keys(tabs);
-  await sh.spreadsheets.values.batchClear({ spreadsheetId: FLOTA_SHEET, requestBody: { ranges: titulos.map(function(t) { return "'" + t + "'!A1:Z5000"; }) } });
-  await sh.spreadsheets.values.batchUpdate({ spreadsheetId: FLOTA_SHEET, requestBody: { valueInputOption: 'USER_ENTERED',
-    data: titulos.map(function(t) { return { range: "'" + t + "'!A1", values: tabs[t] }; }) } });
-  return { pestanas: titulos.length, gastos: gastos.length, entregas: ents.length };
+  var RK = [{ v: ['Camiones: gastos por mes'], t: 'titulo' }, { v: ['Actualizado ' + ahoraAR() + ' · el detalle de cada uno está en la carpeta "Camiones"'], t: 'sub' }, { v: [] },
+            { v: ['Camión', 'Mes'].concat(CATS.map(function(k) { return CAT_NOM[k]; })).concat(['Total']), t: 'cab' }];
+  cams.forEach(function(c) {
+    var meses = {};
+    gastos.forEach(function(g) { if(g._cam !== c.id) return; var k = g.fecha.slice(0, 7); var x = meses[k] = meses[k] || { cats: {}, t: 0 }; var cat = CATS.indexOf(g.categoria) >= 0 ? g.categoria : 'otro'; x.cats[cat] = (x.cats[cat] || 0) + Number(g.monto); x.t += Number(g.monto); });
+    Object.keys(meses).sort().reverse().slice(0, 6).forEach(function(k) { var x = meses[k]; RK.push({ v: [c.codigo, nomMes(k)].concat(CATS.map(function(cat) { return x.cats[cat] || ''; })).concat([x.t]) }); });
+  });
+  try {
+    await escribirHoja(sh, FLOTA_SHEET, RC, [190, 130, 160, 150, 150, 150], [2, 3, 4, 5], 'Resumen choferes');
+    await escribirHoja(sh, FLOTA_SHEET, RK, [90, 130, 110, 110, 110, 110, 110, 110, 110, 110, 120], [2, 3, 4, 5, 6, 7, 8, 9, 10], 'Resumen camiones');
+    // sacar las pestañas viejas (una por chofer/camión) que ahora están en archivos separados
+    var info = await sh.spreadsheets.get({ spreadsheetId: FLOTA_SHEET, fields: 'sheets.properties(sheetId,title)' });
+    var borrar = (info.data.sheets || []).filter(function(x) { return ['Resumen choferes', 'Resumen camiones'].indexOf(x.properties.title) < 0; });
+    if(borrar.length) await sh.spreadsheets.batchUpdate({ spreadsheetId: FLOTA_SHEET, requestBody: { requests: borrar.map(function(x) { return { deleteSheet: { sheetId: x.properties.sheetId } }; }) } });
+  } catch(e) { errores.push('Tablero general: ' + e.message); }
+  return { archivos_actualizados: hechas, errores: errores };
 }
 
 var esperandoFlota = null;
