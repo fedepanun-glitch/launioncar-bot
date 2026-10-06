@@ -180,8 +180,8 @@ async function importarUno(p, simular, desde) {
   if(!choferId) { var rn = chk(await sb().from('choferes').insert([p.nuevo]).select()); choferId = rn[0].id; }
   var cam = chk(await sb().from('camiones').select('id').eq('chofer_id', choferId))[0];
   var fuente = 'planilla ' + p.clave + ' (Drive)';
-  chk(await sb().from('entregas_choferes').delete().eq('chofer_id', choferId).gte('fecha', res.desde).lte('fecha', res.hasta).is('operacion_id', null).select('id'));
-  chk(await sb().from('gastos_camiones').delete().eq('chofer_id', choferId).gte('fecha', res.desde).lte('fecha', res.hasta).select('id'));
+  chk(await sb().from('entregas_choferes').delete().eq('chofer_id', choferId).gte('fecha', desde).lte('fecha', res.hasta).is('operacion_id', null).select('id'));
+  chk(await sb().from('gastos_camiones').delete().eq('chofer_id', choferId).gte('fecha', desde).lte('fecha', res.hasta).select('id'));
   if(ent.length) chk(await sb().from('entregas_choferes').insert(ent.map(function(o) { return { chofer_id: choferId, fecha: o.fecha, categoria: o.categoria, monto: o.monto, descripcion: o.nota || null, fuente: fuente }; })).select('id'));
   if(gas.length) chk(await sb().from('gastos_camiones').insert(gas.map(function(o) { return { chofer_id: choferId, camion_id: cam ? cam.id : null, fecha: o.fecha, categoria: o.categoria, monto: o.monto, descripcion: o.nota || null, fuente: fuente }; })).select('id'));
   res.importado = true;

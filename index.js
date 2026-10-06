@@ -35,7 +35,7 @@ var window_ultimoVenc = {};
 var window_pendiente = {};
 
 // ── DIAGNÓSTICO DE ARRANQUE ──
-console.log("=== BOT v7.6 - importador de choferes desde julio 2026 ===");
+console.log("=== BOT v7.7 - importador de choferes: reemplazo desde el 01/07 ===");
 console.log("GOOGLE_SERVICE_ACCOUNT_JSON configurado:", !!process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
 console.log("SYNC_SECRET configurado:", !!process.env.SYNC_SECRET);
 console.log("Node:", process.version);
