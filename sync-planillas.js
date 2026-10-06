@@ -358,3 +358,5 @@ module.exports = function(app) {
   }, 15 * 60 * 1000);
   console.log('📗 Sincronización de planillas CC activa');
 };
+
+module.exports.programarFlota = programarFlota;

@@ -18,6 +18,8 @@ var db = supabase.createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KE
 require("./sync-planillas")(app);
 // Chat con IA de la app (consultas y carga de operaciones con confirmación)
 require("./chat-ia")(app);
+// Importador de planillas de choferes desde Drive
+require("./importar-choferes")(app, function() { require("./sync-planillas").programarFlota(); });
 var twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 
 // Cliente Supabase del proyecto de TAREAS (separado de La Union Car)
@@ -33,7 +35,7 @@ var window_ultimoVenc = {};
 var window_pendiente = {};
 
 // ── DIAGNÓSTICO DE ARRANQUE ──
-console.log("=== BOT v7.3 - planilla de camiones y choferes ===");
+console.log("=== BOT v7.4 - importador de planillas de choferes ===");
 console.log("GOOGLE_SERVICE_ACCOUNT_JSON configurado:", !!process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
 console.log("SYNC_SECRET configurado:", !!process.env.SYNC_SECRET);
 console.log("Node:", process.version);
