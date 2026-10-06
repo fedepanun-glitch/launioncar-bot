@@ -3,6 +3,7 @@
 //   /importar-choferes?clave=SYNC_SECRET&simular=1   -> muestra qué cargaría
 //   /importar-choferes?clave=SYNC_SECRET             -> carga todo
 //   &solo=luis                                        -> un solo chofer
+//   &desde=2026-07-01                                 -> desde qué fecha (por defecto 01/07/2026)
 // "$ para él" -> entregas_choferes  ·  gastos -> gastos_camiones
 // Reemplaza lo que la app tenía de ese chofer en las fechas de la planilla
 // (no toca las entregas que vienen de un pago de cliente cargado en la app).
@@ -23,7 +24,7 @@ var PLANILLAS = [
   { clave: 'juan',     archivo: '1N2I1GWTRo5X3xWNMNp4PUi7Gb-z8UpQO', buscar: 'benitez' },
   { clave: 'nahuel',   archivo: '12NR1toG4YfO1U3zoChNlC4aPm2191JiR', buscar: 'burgos' },
   { clave: 'samuel',   archivo: '1OUL_1spoDghZJGSkwajQq9yLEyAPFXaI', buscar: 'samuel' },
-  { clave: 'lalo',     archivo: '1zJGCacdxXkkFllZ1wsIjkD1O1zhryYZm', buscar: 'lalo', nuevo: { nombre: 'Lalo', apellido: '-' } },
+  { clave: 'lalo',     archivo: '1zJGCacdxXkkFllZ1wsIjkD1O1zhryYZm', buscar: 'anaya' },  // Lalo = Orlando Ismael Anaya (ya no trabaja)
   { clave: 'silvio',   archivo: '1SfiQM2CmX6ZL5l2n6uMGNu_Vci00z8PfSr0pSnnuksA', buscar: 'silvio', nuevo: { nombre: 'Silvio', apellido: 'Hidalgo' } }
 ];
 
@@ -59,7 +60,8 @@ function fecha(v) {
     d = new Date(yy, mm - 1, dd);
   }
   if(!d || isNaN(d.getTime())) return null;
-  var y = d.getFullYear(); if(y < 2024 || y > 2026) return null;
+  if(d < new Date(2025, 5, 1) && d >= new Date(2024, 5, 1)) d.setFullYear(d.getFullYear() + 1); // error de tipeo del año (ej. 8/1/2025 por 8/1/2026)
+  var y = d.getFullYear(); if(y < 2025 || y > 2026) return null;
   return y + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2);
 }
 function catEntrega(t) {
@@ -159,8 +161,8 @@ async function descargar(fileId) {
   return XLSX.read(Buffer.from(res.data), { type: 'buffer', cellDates: true });
 }
 
-async function importarUno(p, simular) {
-  var movs = leerLibro(await descargar(p.archivo));
+async function importarUno(p, simular, desde) {
+  var movs = leerLibro(await descargar(p.archivo)).filter(function(o) { return o.fecha >= desde; });
   var chofs = chk(await sb().from('choferes').select('id,nombre,apellido'));
   var ch = chofs.filter(function(c) { return norm((c.nombre || '') + ' ' + (c.apellido || '')).indexOf(norm(p.buscar)) >= 0; });
   var res = { planilla: p.clave, movimientos: movs.length };
@@ -190,14 +192,15 @@ module.exports = function(app, alTerminar) {
   app.get('/importar-choferes', async function(req, res) {
     if(req.query.clave !== process.env.SYNC_SECRET) return res.status(401).json({ error: 'no autorizado' });
     var simular = !!req.query.simular, solo = req.query.solo ? norm(req.query.solo) : null, salida = [];
+    var desde = /^\d{4}-\d{2}-\d{2}$/.test(req.query.desde || '') ? req.query.desde : '2026-07-01'; // por defecto, los últimos 3 meses
     for(var i = 0; i < PLANILLAS.length; i++) {
       var p = PLANILLAS[i];
       if(solo && p.clave !== solo) continue;
-      try { salida.push(await importarUno(p, simular)); }
+      try { salida.push(await importarUno(p, simular, desde)); }
       catch(e) { salida.push({ planilla: p.clave, error: e.message }); }
     }
     if(!simular && typeof alTerminar === 'function') alTerminar();
-    res.json({ modo: simular ? 'SIMULACIÓN (no se cargó nada)' : 'IMPORTADO', resultados: salida });
+    res.json({ modo: simular ? 'SIMULACIÓN (no se cargó nada)' : 'IMPORTADO', desde: desde, resultados: salida });
   });
   console.log('📄 Importador de planillas de choferes activo');
 };
