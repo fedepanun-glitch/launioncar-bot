@@ -275,33 +275,38 @@ var ESTADO_SUELDO = { pagado: 'Liquidado y pagado', pendiente: 'Liquidado, falta
 
 function filasChofer(ch, nombre, camion, ents, gastos, sueldos) {
   var meses = {};
-  var m = function(k) { return meses[k] = meses[k] || { ent: [], gas: [], ent$: 0, gas$: 0, sueldo: null, estado: null }; };
-  ents.forEach(function(e) { var x = m(e.fecha.slice(0, 7)); x.ent.push(e); x.ent$ += Number(e.monto); });
+  var m = function(k) { return meses[k] = meses[k] || { ent: [], gas: [], adel$: 0, pago$: 0, gas$: 0, sueldo: null, estado: null }; };
+  ents.forEach(function(e) { var x = m(e.periodo || e.fecha.slice(0, 7)); x.ent.push(e); if(e.categoria === 'pago_sueldo') x.pago$ += Number(e.monto); else x.adel$ += Number(e.monto); });
   gastos.forEach(function(g) { var x = m(g.fecha.slice(0, 7)); x.gas.push(g); x.gas$ += Number(g.monto); });
   sueldos.forEach(function(s) { var x = m(s.anio + '-' + ('0' + s.mes).slice(-2)); x.sueldo = Number(s.total_bruto || s.total_neto || 0); x.estado = s.estado; });
   var claves = Object.keys(meses).sort().reverse();
+  var falta = function(x) { return x.sueldo === null ? '' : Math.round((x.sueldo - x.adel$ + x.gas$ - x.pago$) * 100) / 100; };
   var F = [];
   F.push({ v: ['Cuenta del chofer: ' + nombre], t: 'titulo' });
   F.push({ v: ['Camión: ' + (camion || 'sin asignar') + '  ·  Actualizado ' + ahoraAR() + '  ·  Se completa sola desde la app: no editar acá'], t: 'sub' });
   F.push({ v: [] });
-  F.push({ v: ['RESUMEN POR MES (para liquidar)'], t: 'seccion' });
-  F.push({ v: ['Mes', 'Adelantos y entregas', 'Gastos que pagó el chofer', 'Sueldo liquidado', 'Saldo a pagar al chofer (sueldo − adelantos)', 'Estado'], t: 'cab' });
+  F.push({ v: ['RESUMEN POR MES DE SUELDO (para liquidar)'], t: 'seccion' });
+  F.push({ v: ['Mes del sueldo', 'Adelantos', 'Gastos que pagó el chofer (se le devuelven)', 'Sueldo liquidado', 'Pagos de sueldo', 'Falta pagarle', 'Estado'], t: 'cab' });
   claves.forEach(function(k) {
-    var x = meses[k];
-    F.push({ v: [nomMes(k), x.ent$, x.gas$, x.sueldo === null ? '' : x.sueldo, x.sueldo === null ? '' : x.sueldo - x.ent$, x.sueldo === null ? 'Sin liquidar' : (ESTADO_SUELDO[x.estado] || x.estado || 'Liquidado')], t: x.sueldo === null ? 'pendiente' : null });
+    var x = meses[k], f = falta(x);
+    var estado = x.sueldo === null ? 'Sin liquidar' : (Math.abs(f) < 1 ? 'Pagado completo' : (f > 0 ? 'Falta pagar' : 'Se le pagó de más'));
+    F.push({ v: [nomMes(k), x.adel$, x.gas$, x.sueldo === null ? '' : x.sueldo, x.pago$, f, estado], t: x.sueldo === null || Math.abs(f) >= 1 ? 'pendiente' : null });
   });
+  F.push({ v: ['Falta pagarle = sueldo liquidado − adelantos + gastos que pagó − pagos de sueldo. Cada entrega cuenta en el mes del sueldo al que corresponde (aunque se haya pagado en otro mes).'], t: 'sub' });
   F.push({ v: [] });
-  F.push({ v: ['DETALLE POR MES'], t: 'seccion' });
+  F.push({ v: ['DETALLE POR MES DE SUELDO'], t: 'seccion' });
   claves.forEach(function(k) {
     var x = meses[k];
     F.push({ v: [nomMes(k).toUpperCase()], t: 'mes' });
     F.push({ v: ['Fecha', 'Movimiento', 'Categoría', 'Detalle', 'Entregado al chofer', 'Gasto que pagó'], t: 'cab' });
-    var movs = x.ent.map(function(e) { return [e.fecha, 'Entrega', CAT_NOM[e.categoria] || e.categoria || '', e.descripcion || '', Number(e.monto), '']; })
-      .concat(x.gas.map(function(g) { return [g.fecha, 'Gasto', CAT_NOM[g.categoria] || g.categoria || '', g.descripcion || '', '', Number(g.monto)]; }));
+    var movs = x.ent.map(function(e) {
+      var otroMes = e.periodo && e.periodo !== e.fecha.slice(0, 7);
+      return [e.fecha, e.categoria === 'pago_sueldo' ? 'Pago de sueldo' : 'Entrega', CAT_NOM[e.categoria] || (e.categoria === 'pago_sueldo' ? 'Pago de sueldo' : e.categoria || ''), (e.descripcion || '') + (otroMes ? ' (pagado en ' + nomMes(e.fecha.slice(0, 7)).toLowerCase() + ')' : ''), Number(e.monto), ''];
+    }).concat(x.gas.map(function(g) { return [g.fecha, 'Gasto', CAT_NOM[g.categoria] || g.categoria || '', g.descripcion || '', '', Number(g.monto)]; }));
     movs.sort(function(a, b) { return a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0; });
     movs.forEach(function(r) { r[0] = fechaAR(r[0]); F.push({ v: r }); });
-    F.push({ v: ['Total ' + nomMes(k).toLowerCase(), '', '', '', x.ent$, x.gas$], t: 'total' });
-    if(x.sueldo !== null) F.push({ v: ['Sueldo liquidado: ' + x.sueldo.toLocaleString('es-AR') + '  →  saldo a pagar: ' + (x.sueldo - x.ent$).toLocaleString('es-AR')], t: 'sub' });
+    F.push({ v: ['Total ' + nomMes(k).toLowerCase(), '', '', '', x.adel$ + x.pago$, x.gas$], t: 'total' });
+    if(x.sueldo !== null) F.push({ v: ['Sueldo liquidado: $ ' + x.sueldo.toLocaleString('es-AR') + '   →   falta pagarle: $ ' + Number(falta(x)).toLocaleString('es-AR')], t: 'sub' });
     F.push({ v: [] });
   });
   if(!claves.length) F.push({ v: ['Todavía no hay movimientos cargados.'] });
@@ -341,7 +346,7 @@ async function sincronizarFlota() {
     sb().from('camiones').select('id,codigo,patente,chofer_id,planilla_id').order('codigo'),
     sb().from('choferes').select('id,nombre,apellido,planilla_id').order('apellido'),
     sb().from('gastos_camiones').select('camion_id,chofer_id,fecha,categoria,monto,descripcion,proveedor').order('fecha'),
-    sb().from('entregas_choferes').select('chofer_id,fecha,categoria,monto,descripcion').order('fecha'),
+    sb().from('entregas_choferes').select('chofer_id,fecha,categoria,monto,descripcion,periodo').order('fecha'),
     sb().from('sueldos_choferes').select('chofer_id,mes,anio,total_neto,total_bruto,estado')
   ]);
   var cams = chk(r[0]), chofs = chk(r[1]), gastos = chk(r[2]), ents = chk(r[3]), sueldos = chk(r[4]);
@@ -356,7 +361,7 @@ async function sincronizarFlota() {
     var ch = chofs[i]; if(!ch.planilla_id) continue;
     try {
       var F = filasChofer(ch, nomCh[ch.id], codCam[camDeCh[ch.id]], ents.filter(function(e) { return e.chofer_id === ch.id; }), gastos.filter(function(g) { return g.chofer_id === ch.id; }), sueldos.filter(function(s) { return s.chofer_id === ch.id; }));
-      await escribirHoja(sh, ch.planilla_id, F, [190, 150, 160, 260, 170, 160], [1, 2, 3, 4, 5]);
+      await escribirHoja(sh, ch.planilla_id, F, [170, 130, 170, 140, 140, 140, 140], [1, 2, 3, 4, 5]);
       hechas++;
     } catch(e) { errores.push(nomCh[ch.id] + ': ' + e.message); }
     await pausa();
@@ -372,13 +377,15 @@ async function sincronizarFlota() {
   }
   // 3) tablero general: todos los choferes y todos los camiones por mes
   var RC = [{ v: ['Choferes: resumen por mes'], t: 'titulo' }, { v: ['Actualizado ' + ahoraAR() + ' · el detalle de cada uno está en la carpeta "Choferes"'], t: 'sub' }, { v: [] },
-            { v: ['Chofer', 'Mes', 'Adelantos y entregas', 'Gastos que pagó', 'Sueldo liquidado', 'Saldo a pagar'], t: 'cab' }];
+            { v: ['Chofer', 'Mes del sueldo', 'Adelantos', 'Gastos que pagó', 'Sueldo liquidado', 'Pagos de sueldo', 'Falta pagarle'], t: 'cab' }];
   chofs.forEach(function(ch) {
     var meses = {};
-    ents.forEach(function(e) { if(e.chofer_id === ch.id) { var k = e.fecha.slice(0, 7); meses[k] = meses[k] || [0, 0, null]; meses[k][0] += Number(e.monto); } });
-    gastos.forEach(function(g) { if(g.chofer_id === ch.id) { var k = g.fecha.slice(0, 7); meses[k] = meses[k] || [0, 0, null]; meses[k][1] += Number(g.monto); } });
-    sueldos.forEach(function(s) { if(s.chofer_id === ch.id) { var k = s.anio + '-' + ('0' + s.mes).slice(-2); meses[k] = meses[k] || [0, 0, null]; meses[k][2] = Number(s.total_bruto || s.total_neto || 0); } });
-    Object.keys(meses).sort().reverse().slice(0, 6).forEach(function(k) { var x = meses[k]; RC.push({ v: [nomCh[ch.id], nomMes(k), x[0], x[1], x[2] === null ? '' : x[2], x[2] === null ? 'Sin liquidar' : x[2] - x[0]], t: x[2] === null ? 'pendiente' : null }); });
+    var m = function(k) { return meses[k] = meses[k] || { a: 0, p: 0, g: 0, s: null }; };
+    ents.forEach(function(e) { if(e.chofer_id !== ch.id) return; var x = m(e.periodo || e.fecha.slice(0, 7)); if(e.categoria === 'pago_sueldo') x.p += Number(e.monto); else x.a += Number(e.monto); });
+    gastos.forEach(function(g) { if(g.chofer_id === ch.id) m(g.fecha.slice(0, 7)).g += Number(g.monto); });
+    sueldos.forEach(function(s) { if(s.chofer_id === ch.id) m(s.anio + '-' + ('0' + s.mes).slice(-2)).s = Number(s.total_bruto || s.total_neto || 0); });
+    Object.keys(meses).sort().reverse().slice(0, 6).forEach(function(k) { var x = meses[k]; var f = x.s === null ? 'Sin liquidar' : Math.round((x.s - x.a + x.g - x.p) * 100) / 100;
+      RC.push({ v: [nomCh[ch.id], nomMes(k), x.a, x.g, x.s === null ? '' : x.s, x.p, f], t: x.s === null || Math.abs(f) >= 1 ? 'pendiente' : null }); });
   });
   var RK = [{ v: ['Camiones: gastos por mes'], t: 'titulo' }, { v: ['Actualizado ' + ahoraAR() + ' · el detalle de cada uno está en la carpeta "Camiones"'], t: 'sub' }, { v: [] },
             { v: ['Camión', 'Mes'].concat(CATS.map(function(k) { return CAT_NOM[k]; })).concat(['Total']), t: 'cab' }];
@@ -388,7 +395,7 @@ async function sincronizarFlota() {
     Object.keys(meses).sort().reverse().slice(0, 6).forEach(function(k) { var x = meses[k]; RK.push({ v: [c.codigo, nomMes(k)].concat(CATS.map(function(cat) { return x.cats[cat] || ''; })).concat([x.t]) }); });
   });
   try {
-    await escribirHoja(sh, FLOTA_SHEET, RC, [190, 130, 160, 150, 150, 150], [2, 3, 4, 5], 'Resumen choferes');
+    await escribirHoja(sh, FLOTA_SHEET, RC, [190, 130, 140, 140, 140, 140, 140], [2, 3, 4, 5, 6], 'Resumen choferes');
     await escribirHoja(sh, FLOTA_SHEET, RK, [90, 130, 110, 110, 110, 110, 110, 110, 110, 110, 120], [2, 3, 4, 5, 6, 7, 8, 9, 10], 'Resumen camiones');
     // sacar las pestañas viejas (una por chofer/camión) que ahora están en archivos separados
     var info = await sh.spreadsheets.get({ spreadsheetId: FLOTA_SHEET, fields: 'sheets.properties(sheetId,title)' });
