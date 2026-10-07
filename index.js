@@ -35,9 +35,10 @@ var window_ultimoVenc = {};
 var window_pendiente = {};
 
 // ── DIAGNÓSTICO DE ARRANQUE ──
-console.log("=== BOT v8.2 - saldo inicial de las CC desde la app ===");
+console.log("=== BOT v8.3 - planillas nuevas automaticas (Apps Script) ===");
 console.log("GOOGLE_SERVICE_ACCOUNT_JSON configurado:", !!process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
 console.log("SYNC_SECRET configurado:", !!process.env.SYNC_SECRET);
+console.log("APPS_SCRIPT_URL configurado:", !!process.env.APPS_SCRIPT_URL);
 console.log("Node:", process.version);
 console.log("Tiene fetch global:", typeof fetch !== "undefined");
 console.log("SUPABASE_URL configurado:", !!process.env.SUPABASE_URL);

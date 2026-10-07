@@ -42,9 +42,49 @@ function chk(r) { if(r.error) throw new Error('Supabase: ' + r.error.message); r
 
 function fechaAR(iso) { var p = iso.split('-'); return p[2] + '/' + p[1] + '/' + p[0]; }
 
+
+// ── Creación de planillas nuevas mediante el Apps Script (corre con la cuenta de Google de la empresa) ──
+function pedirAppsScript(cuerpo) {
+  var url = process.env.APPS_SCRIPT_URL;
+  if(!url) return Promise.reject(new Error('Falta APPS_SCRIPT_URL en Render'));
+  var https = require('https');
+  var datos = JSON.stringify(Object.assign({ clave: process.env.SYNC_SECRET }, cuerpo));
+  var pedir = function(u, metodo, saltos) {
+    return new Promise(function(ok, mal) {
+      var x = new URL(u);
+      var req = https.request({ hostname: x.hostname, path: x.pathname + x.search, method: metodo,
+        headers: metodo === 'POST' ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(datos) } : {} }, function(res) {
+        if(res.statusCode >= 300 && res.statusCode < 400 && res.headers.location && saltos < 5) { res.resume(); return ok(pedir(res.headers.location, 'GET', saltos + 1)); }
+        var t = ''; res.on('data', function(c) { t += c; }); res.on('end', function() {
+          try { var j = JSON.parse(t); if(!j.ok) return mal(new Error(j.error || 'El Apps Script no pudo crear la planilla')); ok(j); }
+          catch(e) { mal(new Error('Respuesta inesperada del Apps Script (' + res.statusCode + ')')); }
+        });
+      });
+      req.on('error', mal);
+      if(metodo === 'POST') req.write(datos);
+      req.end();
+    });
+  };
+  return pedir(url, 'POST', 0);
+}
+async function crearPlanilla(tabla, id, cuerpo) {
+  var r = await pedirAppsScript(cuerpo);
+  chk(await sb().from(tabla).update({ planilla_id: r.id }).eq('id', id).select('id'));
+  console.log('🆕 Planilla creada en Drive:', cuerpo.tipo, cuerpo.nombre);
+  return r.id;
+}
+
 async function sincronizarCuenta(terceroId) {
-  var ter = chk(await sb().from('terceros').select('nombre,planilla_id').eq('id', terceroId));
-  if(!ter.length || !ter[0].planilla_id) return { omitida: true };
+  var ter = chk(await sb().from('terceros').select('nombre,planilla_id,es_cliente,es_proveedor').eq('id', terceroId));
+  if(!ter.length) return { omitida: true };
+  if(!ter[0].planilla_id) {
+    // cuenta sin planilla: se crea solo si tiene movimientos desde el 01/10 y está configurado el Apps Script
+    if(!process.env.APPS_SCRIPT_URL) return { omitida: true };
+    var recientes = chk(await sb().from('movimientos_cuenta').select('id').eq('tercero_id', terceroId).gte('fecha', FECHA_INICIO).limit(1));
+    if(!recientes.length) return { omitida: true };
+    ter[0].planilla_id = await crearPlanilla('terceros', terceroId, { tipo: 'cc', nombre: ter[0].nombre,
+      tipoCuenta: ter[0].es_proveedor && !ter[0].es_cliente ? 'Proveedor' : (ter[0].es_cliente && ter[0].es_proveedor ? 'Cliente y proveedor' : 'Cliente') });
+  }
   var movs = chk(await sb().from('movimientos_cuenta')
     .select('fecha,importe,operaciones(tipo,litros,precio_unitario,forma_pago,notas,nro_remito,nro_factura,destino_texto,revisada,created_at,productos(nombre),choferes(nombre,apellido),camiones(codigo),empresas(nombre))')
     .eq('tercero_id', terceroId).gte('fecha', FECHA_INICIO).order('fecha', { ascending: true }));
@@ -208,6 +248,14 @@ function programar(terceroId) {
 
 async function sincronizarTodas() {
   var ters = chk(await sb().from('terceros').select('id,nombre').not('planilla_id', 'is', null));
+  if(process.env.APPS_SCRIPT_URL) {
+    // cuentas nuevas con movimientos desde el 01/10 que todavía no tienen planilla
+    var conMovs = chk(await sb().from('movimientos_cuenta').select('tercero_id').gte('fecha', FECHA_INICIO));
+    var ya = {}; ters.forEach(function(t) { ya[t.id] = 1; });
+    var sinPlanilla = chk(await sb().from('terceros').select('id,nombre').is('planilla_id', null));
+    var nuevos = {}; conMovs.forEach(function(m) { nuevos[m.tercero_id] = 1; });
+    sinPlanilla.forEach(function(t) { if(nuevos[t.id] && !ya[t.id]) ters.push(t); });
+  }
   var ok = 0, errores = [];
   for(var i = 0; i < ters.length; i++) {
     try { await sincronizarCuenta(ters[i].id); ok++; }
@@ -363,7 +411,12 @@ async function sincronizarFlota() {
   var pausa = function() { return new Promise(function(ok) { setTimeout(ok, 1500); }); };
   // 1) un archivo por chofer
   for(var i = 0; i < chofs.length; i++) {
-    var ch = chofs[i]; if(!ch.planilla_id) continue;
+    var ch = chofs[i];
+    if(!ch.planilla_id) {
+      if(!process.env.APPS_SCRIPT_URL) continue;
+      try { ch.planilla_id = await crearPlanilla('choferes', ch.id, { tipo: 'chofer', nombre: nomCh[ch.id] }); }
+      catch(e) { errores.push(nomCh[ch.id] + ': ' + e.message); continue; }
+    }
     try {
       var F = filasChofer(ch, nomCh[ch.id], codCam[camDeCh[ch.id]], ents.filter(function(e) { return e.chofer_id === ch.id; }), gastos.filter(function(g) { return g.chofer_id === ch.id; }), sueldos.filter(function(s) { return s.chofer_id === ch.id; }));
       await escribirHoja(sh, ch.planilla_id, F, [170, 130, 170, 140, 140, 140, 140], [1, 2, 3, 4, 5]);
@@ -373,7 +426,12 @@ async function sincronizarFlota() {
   }
   // 2) un archivo por camión
   for(var j = 0; j < cams.length; j++) {
-    var c = cams[j]; if(!c.planilla_id) continue;
+    var c = cams[j];
+    if(!c.planilla_id) {
+      if(!process.env.APPS_SCRIPT_URL) continue;
+      try { c.planilla_id = await crearPlanilla('camiones', c.id, { tipo: 'camion', nombre: c.codigo }); }
+      catch(e) { errores.push(c.codigo + ': ' + e.message); continue; }
+    }
     try {
       await escribirHoja(sh, c.planilla_id, filasCamion(c, nomCh[c.chofer_id], gastos.filter(function(g) { return g._cam === c.id; })), [150, 110, 110, 110, 110, 110, 110, 110, 110, 130], [1, 2, 3, 4, 5, 6, 7, 8, 9]);
       hechas++;
@@ -444,6 +502,13 @@ module.exports = function(app) {
     if(req.get('x-sync-secret') !== process.env.SYNC_SECRET) return res.status(401).json({ error: 'no autorizado' });
     programarFlota();
     res.json({ ok: true });
+  });
+  app.get('/apps-script/probar', function(req, res) {
+    if(req.query.clave !== process.env.SYNC_SECRET) return res.status(401).json({ error: 'no autorizado' });
+    if(!process.env.APPS_SCRIPT_URL) return res.json({ ok: false, error: 'Falta APPS_SCRIPT_URL en Render' });
+    var https = require('https'), u = new URL(process.env.APPS_SCRIPT_URL), saltos = 0;
+    (function get(url) { https.get(url, function(r) { if(r.statusCode >= 300 && r.statusCode < 400 && r.headers.location && saltos++ < 5) { r.resume(); return get(r.headers.location); }
+      var t = ''; r.on('data', function(c) { t += c; }); r.on('end', function() { res.type('json').send(t); }); }).on('error', function(e) { res.json({ ok: false, error: e.message }); }); })(u.href);
   });
   app.get('/sync-flota/ahora', function(req, res) {
     if(req.query.clave !== process.env.SYNC_SECRET) return res.status(401).json({ error: 'no autorizado' });
