@@ -16,16 +16,17 @@ function sb() { if(!_sb) _sb = supabaseLib.createClient(process.env.SUPABASE_URL
 function chk(r) { if(r.error) throw new Error(r.error.message); return r.data || []; }
 function norm(s) { return String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ').trim(); }
 
+var CARPETA = process.env.CARPETA_PLANILLAS || '1IND7ySofyYPmIdSDAsKyiA-NDcmPtEwp'; // "Importación choferes (temporal)"
 var PLANILLAS = [
-  { clave: 'luis',     archivo: '1JsXHOo1Phgmo7eOmtBMjQ-YTE3F_vMtl', buscar: 'banosola' },
-  { clave: 'gustavo',  archivo: '1Ph5XHkI14wDB4i2e6nIqreG05VaxWrQf', buscar: 'gustavo' },
-  { clave: 'fernando', archivo: '1Oq_3NXN-M8cnIgtA7E-twjUnvKL7EjvN', buscar: 'freire' },
-  { clave: 'enrique',  archivo: '1mN-7YdLd66sxhldA6KWuGcDvB__Onj85', buscar: 'cefferino' },
-  { clave: 'juan',     archivo: '1N2I1GWTRo5X3xWNMNp4PUi7Gb-z8UpQO', buscar: 'benitez' },
-  { clave: 'nahuel',   archivo: '12NR1toG4YfO1U3zoChNlC4aPm2191JiR', buscar: 'burgos' },
-  { clave: 'samuel',   archivo: '1OUL_1spoDghZJGSkwajQq9yLEyAPFXaI', buscar: 'samuel' },
-  { clave: 'lalo',     archivo: '1zJGCacdxXkkFllZ1wsIjkD1O1zhryYZm', buscar: 'anaya' },  // Lalo = Orlando Ismael Anaya (ya no trabaja)
-  { clave: 'silvio',   archivo: '1SfiQM2CmX6ZL5l2n6uMGNu_Vci00z8PfSr0pSnnuksA', buscar: 'silvio', nuevo: { nombre: 'Silvio', apellido: 'Hidalgo' } }
+  { clave: 'luis', nombre: 'Importar - Chofer Luis', buscar: 'banosola' },
+  { clave: 'gustavo', nombre: 'Importar - Chofer Gustavo', buscar: 'gustavo' },
+  { clave: 'fernando', nombre: 'Importar - Chofer Fernando', buscar: 'freire' },
+  { clave: 'enrique', nombre: 'Importar - Chofer Enrique', buscar: 'cefferino' },
+  { clave: 'juan', nombre: 'Importar - Chofer Juan', buscar: 'benitez' },
+  { clave: 'nahuel', nombre: 'Importar - Chofer Nahuel', buscar: 'burgos' },
+  { clave: 'samuel', nombre: 'Importar - Chofer Samuel', buscar: 'samuel' },
+  { clave: 'lalo', nombre: 'Importar - Chofer Lalo', buscar: 'anaya' },  // Lalo = Orlando Ismael Anaya (ya no trabaja)
+  { clave: 'silvio', nombre: 'Importar - Chofer Silvio', buscar: 'silvio', nuevo: { nombre: 'Silvio', apellido: 'Hidalgo' } }
 ];
 
 // ── Lectura de números y fechas como vienen en las planillas ──
@@ -150,10 +151,14 @@ function leerLibro(wb) {
   return total;
 }
 
-async function descargar(fileId) {
+async function descargar(nombre) {
   var cred = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
   var auth = new google.auth.JWT(cred.client_email, null, cred.private_key, ['https://www.googleapis.com/auth/drive.readonly']);
   var drive = google.drive({ version: 'v3', auth: auth });
+  var lista = await drive.files.list({ q: "'" + CARPETA + "' in parents and name contains '" + nombre.replace(/'/g, "\\'") + "' and trashed = false", orderBy: 'modifiedTime desc', fields: 'files(id,name,modifiedTime)', pageSize: 5 });
+  var archivo = (lista.data.files || [])[0];
+  if(!archivo) throw new Error('No encontré "' + nombre + '" en la carpeta Importación choferes (temporal)');
+  var fileId = archivo.id;
   var meta = await drive.files.get({ fileId: fileId, fields: 'mimeType,name' });
   var res = meta.data.mimeType === 'application/vnd.google-apps.spreadsheet'
     ? await drive.files.export({ fileId: fileId, mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }, { responseType: 'arraybuffer' })
@@ -162,7 +167,7 @@ async function descargar(fileId) {
 }
 
 async function importarUno(p, simular, desde) {
-  var movs = leerLibro(await descargar(p.archivo)).filter(function(o) { return o.fecha >= desde; });
+  var movs = leerLibro(await descargar(p.nombre)).filter(function(o) { return o.fecha >= desde; });
   var chofs = chk(await sb().from('choferes').select('id,nombre,apellido'));
   var ch = chofs.filter(function(c) { return norm((c.nombre || '') + ' ' + (c.apellido || '')).indexOf(norm(p.buscar)) >= 0; });
   var res = { planilla: p.clave, movimientos: movs.length };
@@ -176,14 +181,60 @@ async function importarUno(p, simular, desde) {
   res.desde = movs.length ? movs[0].fecha : null; res.hasta = movs.length ? movs[movs.length - 1].fecha : null;
   var porMes = {}; movs.forEach(function(o) { var m = o.fecha.slice(0, 7); porMes[m] = porMes[m] || { entregas: 0, gastos: 0 }; porMes[m][o.clase === 'entrega' ? 'entregas' : 'gastos'] += o.monto; });
   res.por_mes = porMes;
-  if(simular || !movs.length) { res.ejemplos = movs.slice(-6); return res; }
-  if(!choferId) { var rn = chk(await sb().from('choferes').insert([p.nuevo]).select()); choferId = rn[0].id; }
+  if(!choferId && !simular) { var rn = chk(await sb().from('choferes').insert([p.nuevo]).select()); choferId = rn[0].id; }
+  var hasta = res.hasta || desde;
+  var fuente = 'planilla ' + p.clave + ' (Drive)', refOp = 'planilla chofer ' + p.clave;
+  // lo cargado a mano en la app (no viene de planillas): no se toca y no se duplica
+  var yaEnt = [], yaGas = [], yaOps = [];
+  if(choferId) {
+    yaEnt = chk(await sb().from('entregas_choferes').select('fecha,monto,fuente').eq('chofer_id', choferId).gte('fecha', desde).lte('fecha', hasta));
+    yaEnt = yaEnt.filter(function(e) { return !(e.fuente || '').startsWith('planilla'); });
+    yaGas = chk(await sb().from('gastos_camiones').select('fecha,monto,fuente').eq('chofer_id', choferId).gte('fecha', desde).lte('fecha', hasta));
+    yaGas = yaGas.filter(function(g) { return !(g.fuente || '').startsWith('planilla'); });
+  }
+  var usar = function(lista, fecha, monto) { for(var q = 0; q < lista.length; q++) { if(lista[q].fecha === fecha && Math.abs(Number(lista[q].monto) - monto) < 1) { lista.splice(q, 1); return true; } } return false; };
+  // clientes que aparecen en las notas ("Transferencia San Jaime")
+  var ters = chk(await sb().from('terceros').select('id,nombre,es_cliente'));
+  var alias = chk(await sb().from('terceros_alias').select('tercero_id,alias'));
+  var claves = [];
+  ters.forEach(function(t) { if(!t.es_cliente) return; var base = norm(t.nombre.replace(/\(.*\)/, '')); if(base.length >= 4) claves.push([base, t.id]); });
+  alias.forEach(function(a) { var t = ters.filter(function(x) { return x.id === a.tercero_id && x.es_cliente; })[0]; var n = norm(a.alias); if(t && n.length >= 4) claves.push([n, t.id]); });
+  var clienteDe = function(nota) { var n = norm(nota); if(!n || /\bluc\b|la union/.test(n)) return null; var hit = null; claves.forEach(function(c) { if(!hit && n.indexOf(c[0]) >= 0) hit = c[1]; }); return hit; };
+  var CORTE = '2026-10-01';
+  var emp = chk(await sb().from('empresas').select('id,nombre')).filter(function(e) { return e.nombre === 'La Unión Car SRL'; })[0];
+  var nuevasEnt = [], nuevosGas = [], nuevasOps = [], omitidos = 0;
+  ent.forEach(function(o) {
+    var cli = o.fecha >= CORTE ? clienteDe(o.nota) : null;
+    if(cli) {
+      if(choferId) yaOps.push(1);
+      nuevasOps.push({ empresa_id: emp ? emp.id : null, tipo: 'pago_a_tercero', fecha: o.fecha, tercero_id: cli, chofer_id: choferId, importe: o.monto, forma_pago: 'transferencia',
+        categoria_chofer: 'adelanto_sueldo', notas: (o.nota || '') + ' (de la planilla del chofer)', origen: 'sistema', fuente_ref: refOp, _cli: cli });
+    } else if(usar(yaEnt, o.fecha, o.monto)) omitidos++;
+    else nuevasEnt.push({ chofer_id: choferId, fecha: o.fecha, categoria: o.categoria, monto: o.monto, descripcion: o.nota || null, fuente: fuente });
+  });
+  gas.forEach(function(o) { if(usar(yaGas, o.fecha, o.monto)) omitidos++; else nuevosGas.push({ chofer_id: choferId, camion_id: null, fecha: o.fecha, categoria: o.categoria, monto: o.monto, descripcion: o.nota || null, fuente: fuente }); });
+  // pagos de clientes ya cargados en la app (Cobro → "Un chofer"): no se duplican
+  if(choferId && nuevasOps.length) {
+    var opsApp = chk(await sb().from('operaciones').select('fecha,importe,fuente_ref').eq('tipo', 'pago_a_tercero').eq('chofer_id', choferId).gte('fecha', desde).lte('fecha', hasta));
+    opsApp = opsApp.filter(function(o) { return o.fuente_ref !== refOp; }).map(function(o) { return { fecha: o.fecha, monto: Number(o.importe) }; });
+    nuevasOps = nuevasOps.filter(function(o) { if(usar(opsApp, o.fecha, o.importe)) { omitidos++; return false; } return true; });
+  }
+  var nomCli = {}; ters.forEach(function(t) { nomCli[t.id] = t.nombre; });
+  res.ya_estaban_en_la_app = omitidos;
+  res.pagos_de_clientes = nuevasOps.map(function(o) { return o.fecha + ' ' + nomCli[o._cli] + ' $' + o.importe; });
+  res.entregas_a_cargar = nuevasEnt.length; res.gastos_a_cargar = nuevosGas.length;
+  if(simular) { res.ejemplos = movs.slice(-6); return res; }
   var cam = chk(await sb().from('camiones').select('id').eq('chofer_id', choferId))[0];
-  var fuente = 'planilla ' + p.clave + ' (Drive)';
-  chk(await sb().from('entregas_choferes').delete().eq('chofer_id', choferId).gte('fecha', desde).lte('fecha', res.hasta).is('operacion_id', null).select('id'));
-  chk(await sb().from('gastos_camiones').delete().eq('chofer_id', choferId).gte('fecha', desde).lte('fecha', res.hasta).select('id'));
-  if(ent.length) chk(await sb().from('entregas_choferes').insert(ent.map(function(o) { return { chofer_id: choferId, fecha: o.fecha, categoria: o.categoria, monto: o.monto, descripcion: o.nota || null, fuente: fuente }; })).select('id'));
-  if(gas.length) chk(await sb().from('gastos_camiones').insert(gas.map(function(o) { return { chofer_id: choferId, camion_id: cam ? cam.id : null, fecha: o.fecha, categoria: o.categoria, monto: o.monto, descripcion: o.nota || null, fuente: fuente }; })).select('id'));
+  nuevosGas.forEach(function(g) { g.chofer_id = choferId; g.camion_id = cam ? cam.id : null; });
+  nuevasEnt.forEach(function(e) { e.chofer_id = choferId; });
+  nuevasOps.forEach(function(o) { o.chofer_id = choferId; delete o._cli; });
+  // borrar solo lo que había venido de planillas en este período, y volver a cargarlo
+  chk(await sb().from('entregas_choferes').delete().eq('chofer_id', choferId).gte('fecha', desde).lte('fecha', hasta).is('operacion_id', null).like('fuente', 'planilla%').select('id'));
+  chk(await sb().from('gastos_camiones').delete().eq('chofer_id', choferId).gte('fecha', desde).lte('fecha', hasta).like('fuente', 'planilla%').select('id'));
+  chk(await sb().from('operaciones').delete().eq('fuente_ref', refOp).eq('chofer_id', choferId).gte('fecha', desde).lte('fecha', hasta).select('id'));
+  if(nuevasEnt.length) chk(await sb().from('entregas_choferes').insert(nuevasEnt).select('id'));
+  if(nuevosGas.length) chk(await sb().from('gastos_camiones').insert(nuevosGas).select('id'));
+  if(nuevasOps.length) chk(await sb().from('operaciones').insert(nuevasOps).select('id'));
   res.importado = true;
   return res;
 }
