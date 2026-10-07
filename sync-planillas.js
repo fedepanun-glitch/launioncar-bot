@@ -73,9 +73,14 @@ async function sincronizarCuenta(terceroId) {
               imp >= 0 ? imp : '', imp < 0 ? -imp : '']);
     der.push([FORMAS[o.forma_pago] || '', '', chofer.join(' / '), notas.join(' · ')]);
   });
+  // saldo inicial = todo lo anterior al 01/10 (incluye correcciones por conciliación)
+  var previos = chk(await sb().from('movimientos_cuenta').select('importe').eq('tercero_id', terceroId).lt('fecha', FECHA_INICIO));
+  var saldoInicial = Math.round(previos.reduce(function(s, m) { return s + Number(m.importe || 0); }, 0) * 100) / 100;
   var sh = sheetsCliente();
   var id = ter[0].planilla_id;
   await sh.spreadsheets.values.batchClear({ spreadsheetId: id, requestBody: { ranges: ['Cuenta!A10:G1000', 'Cuenta!I10:L1000'] } });
+  await sh.spreadsheets.values.update({ spreadsheetId: id, range: 'Cuenta!A9:H9', valueInputOption: 'USER_ENTERED',
+    requestBody: { values: [['01/10/2026', 'Saldo inicial', 'Saldo al 30/09/2026 (según la app, incluye conciliaciones)', '', '', '', '', saldoInicial]] } });
   if(izq.length) {
     var fin = 9 + izq.length;
     await sh.spreadsheets.values.batchUpdate({ spreadsheetId: id, requestBody: { valueInputOption: 'USER_ENTERED', data: [

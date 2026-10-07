@@ -35,7 +35,7 @@ var window_ultimoVenc = {};
 var window_pendiente = {};
 
 // ── DIAGNÓSTICO DE ARRANQUE ──
-console.log("=== BOT v8.1 - reimportar choferes sin pisar lo cargado en la app ===");
+console.log("=== BOT v8.2 - saldo inicial de las CC desde la app ===");
 console.log("GOOGLE_SERVICE_ACCOUNT_JSON configurado:", !!process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
 console.log("SYNC_SECRET configurado:", !!process.env.SYNC_SECRET);
 console.log("Node:", process.version);
