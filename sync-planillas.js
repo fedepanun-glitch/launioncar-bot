@@ -67,12 +67,33 @@ function pedirAppsScript(cuerpo) {
   };
   return pedir(url, 'POST', 0);
 }
-async function crearPlanilla(tabla, id, cuerpo) {
-  var r = await pedirAppsScript(cuerpo);
-  chk(await sb().from(tabla).update({ planilla_id: r.id }).eq('id', id).select('id'));
-  console.log('🆕 Planilla creada en Drive:', cuerpo.tipo, cuerpo.nombre);
-  return r.id;
+var CARPETAS_PLANILLAS = { cc: '12OlZk5lxNJAlV8ulFK5GcZAI8aC6bsWB', chofer: '1x0rPWhMGX3u8TP6o7hdHCNCpwVeVav_q', camion: '1lODvg0eJp6dUyZqFnBpISgYee54zncP-' };
+function tituloPlanilla(cuerpo) { return cuerpo.tipo === 'cc' ? 'CC ' + cuerpo.nombre : (cuerpo.tipo === 'chofer' ? 'Chofer - ' + cuerpo.nombre : 'Camión ' + cuerpo.nombre); }
+// Busca si ya hay una planilla con ese nombre en la carpeta (para no crear duplicados)
+async function buscarPlanillaExistente(cuerpo) {
+  try {
+    var cred = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
+    var auth = new google.auth.JWT(cred.client_email, null, cred.private_key, ['https://www.googleapis.com/auth/drive.readonly']);
+    var drive = google.drive({ version: 'v3', auth: auth });
+    var nombre = tituloPlanilla(cuerpo).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    var r = await drive.files.list({ q: "'" + CARPETAS_PLANILLAS[cuerpo.tipo] + "' in parents and name = '" + nombre + "' and trashed = false",
+      orderBy: 'modifiedTime desc', fields: 'files(id,name)', pageSize: 5 });
+    return (r.data.files || [])[0] ? r.data.files[0].id : null;
+  } catch(e) { console.error('⚠️ No pude buscar planillas existentes:', e.message); return null; }
 }
+async function crearPlanilla(tabla, id, cuerpo) {
+  var planillaId = await buscarPlanillaExistente(cuerpo);
+  if(planillaId) console.log('♻️ Ya existía la planilla, la reutilizo:', tituloPlanilla(cuerpo));
+  else { planillaId = (await pedirAppsScript(cuerpo)).id; console.log('🆕 Planilla creada en Drive:', tituloPlanilla(cuerpo)); }
+  var up = await sb().from(tabla).update({ planilla_id: planillaId }).eq('id', id).select('id');
+  if(up.error || !up.data || !up.data.length) {
+    var msg = 'No pude anotar la planilla en la tabla ' + tabla + ': ' + (up.error ? up.error.message : 'no se actualizó ningún registro');
+    console.error('❌ ' + msg);
+    _erroresPlanillas.push(tituloPlanilla(cuerpo) + ' → ' + msg);
+  }
+  return planillaId;
+}
+var _erroresPlanillas = [];
 
 async function sincronizarCuenta(terceroId) {
   var ter = chk(await sb().from('terceros').select('nombre,planilla_id,es_cliente,es_proveedor').eq('id', terceroId));
@@ -262,6 +283,7 @@ async function sincronizarTodas() {
     catch(e) { errores.push(ters[i].nombre + ': ' + e.message); }
     await new Promise(function(r) { setTimeout(r, 2500); }); // respeta el límite de Google
   }
+  errores = errores.concat(_erroresPlanillas.splice(0));
   console.log('📗 Sincronización completa:', ok, 'planillas', errores.length ? '· errores: ' + errores.join(' | ') : '');
   return { actualizadas: ok, errores: errores };
 }
@@ -465,6 +487,7 @@ async function sincronizarFlota() {
     var borrar = (info.data.sheets || []).filter(function(x) { return ['Resumen choferes', 'Resumen camiones'].indexOf(x.properties.title) < 0; });
     if(borrar.length) await sh.spreadsheets.batchUpdate({ spreadsheetId: FLOTA_SHEET, requestBody: { requests: borrar.map(function(x) { return { deleteSheet: { sheetId: x.properties.sheetId } }; }) } });
   } catch(e) { errores.push('Tablero general: ' + e.message); }
+  errores = errores.concat(_erroresPlanillas.splice(0));
   return { archivos_actualizados: hechas, errores: errores };
 }
 
