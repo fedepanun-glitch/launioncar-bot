@@ -89,6 +89,18 @@ async function resolverProducto(txt) {
 
 // ── HERRAMIENTAS ──
 var HERRAMIENTAS = [
+  { name: 'vencimientos', description: 'Consulta vencimientos de documentación (VTV, seguro, habilitaciones, registro, psicofísico, etc.) de camiones, semirremolques y choferes: lo vencido y lo que vence en los próximos días. Se puede filtrar por una unidad o chofer.',
+    input_schema: { type: 'object', properties: {
+      dias: { type: 'number', description: 'Ventana de días hacia adelante (por defecto 30)' },
+      unidad: { type: 'string', description: 'Opcional: código, patente o parte (ej. "UC-04", "KTY") o nombre de chofer' },
+      todos: { type: 'boolean', description: 'true para listar todos los vencimientos cargados de esa unidad, aunque falte mucho' } } } },
+  { name: 'proponer_vencimiento', description: 'Prepara la carga o renovación de un vencimiento de documentación (NO lo guarda): el usuario lo confirma con un botón. Si ya había uno del mismo documento para esa unidad, lo reemplaza (renovación).',
+    input_schema: { type: 'object', properties: {
+      unidad_tipo: { type: 'string', enum: ['camion', 'semi', 'chofer'], description: 'camion = tractor/camión (UC-..), semi = semirremolque/cisterna (SR-..), chofer = persona' },
+      unidad: { type: 'string', description: 'Código, patente (o parte, ej. "KTY") o nombre del chofer' },
+      documento: { type: 'string', description: 'camion: vtv, seguro, habilitacion_cnrt, extintor, cisterna_adr, service. semi: vtv, seguro, cisterna_adr, extintor, rta, patente, otro. chofer: registro_conducir, seguro_art, cargas_peligrosas_cnrt, psicofisico, conduccion_defensiva, libreta_sanitaria' },
+      vence: { type: 'string', description: 'Fecha de vencimiento AAAA-MM-DD' },
+      notas: { type: 'string' } }, required: ['unidad_tipo', 'unidad', 'documento', 'vence'] } },
   { name: 'buscar_cuentas', description: 'Lista cuentas corrientes (clientes y proveedores) con su saldo. Saldo positivo = nos debe (o en un proveedor: a nuestro favor); negativo = le debemos. Sirve para "quién nos debe más", "cuánto le debemos a los proveedores", buscar una cuenta por nombre o alias.',
     input_schema: { type: 'object', properties: {
       texto: { type: 'string', description: 'Parte del nombre o alias (opcional)' },
@@ -239,7 +251,73 @@ async function ejecutar(nombre, inp, propuestas, usuario) {
     propuestas.push(p);
     return { ok: true, mensaje: 'Propuesta preparada. NO está guardada: el usuario la ve en una tarjeta y la confirma con el botón "Confirmar".', propuesta: p };
   }
+  if(nombre === 'vencimientos' || nombre === 'proponer_vencimiento') return await herramientaVencimientos(nombre, inp, propuestas, hoy);
   return { error: 'Herramienta desconocida' };
+}
+
+var DOCS = {
+  camion: { tabla: 'documentos_camiones', campo: 'camion_id', tipos: ['vtv', 'seguro', 'habilitacion_cnrt', 'extintor', 'cisterna_adr', 'service'] },
+  semi:   { tabla: 'documentos_semirremolques', campo: 'semirremolque_id', tipos: ['vtv', 'seguro', 'cisterna_adr', 'extintor', 'rta', 'patente', 'otro'] },
+  chofer: { tabla: 'documentos_choferes', campo: 'chofer_id', tipos: ['registro_conducir', 'seguro_art', 'cargas_peligrosas_cnrt', 'psicofisico', 'conduccion_defensiva', 'libreta_sanitaria'] }
+};
+var DOC_NOM = { vtv: 'VTV', seguro: 'Seguro', habilitacion_cnrt: 'Habilitación CNRT', extintor: 'Extintor', cisterna_adr: 'Cisterna ADR', service: 'Service', rta: 'RTA', patente: 'Patente', otro: 'Otro',
+  registro_conducir: 'Registro de conducir', seguro_art: 'Seguro / ART', cargas_peligrosas_cnrt: 'Cargas peligrosas CNRT', psicofisico: 'Psicofísico', conduccion_defensiva: 'Conducción defensiva', libreta_sanitaria: 'Libreta sanitaria' };
+var DOC_SINON = { rto: 'vtv', 'revision tecnica': 'vtv', registro: 'registro_conducir', licencia: 'registro_conducir', carnet: 'registro_conducir', art: 'seguro_art', cnrt: 'habilitacion_cnrt',
+  habilitacion: 'habilitacion_cnrt', 'cargas peligrosas': 'cargas_peligrosas_cnrt', psico: 'psicofisico', 'psicofisico': 'psicofisico', defensiva: 'conduccion_defensiva', matafuego: 'extintor', adr: 'cisterna_adr' };
+
+async function unidadesFlota() {
+  var r = await Promise.all([sb().from('camiones').select('id,codigo,patente'), sb().from('semirremolques').select('id,codigo,patente'), sb().from('choferes').select('id,nombre,apellido')]);
+  var cam = chk(r[0]).map(function(x) { return { tipo: 'camion', id: x.id, nombre: (x.codigo || '') + (x.patente ? ' (' + x.patente + ')' : ''), claves: [x.codigo, x.patente] }; });
+  var sem = chk(r[1]).map(function(x) { return { tipo: 'semi', id: x.id, nombre: 'Semi ' + (x.codigo || '') + (x.patente ? ' (' + x.patente + ')' : ''), claves: [x.codigo, x.patente] }; });
+  var cho = chk(r[2]).map(function(x) { var n = ((x.nombre || '') + ' ' + (x.apellido || '')).replace(/\s+/g, ' ').trim(); return { tipo: 'chofer', id: x.id, nombre: n, claves: [n, x.apellido, x.nombre] }; });
+  return cam.concat(sem, cho);
+}
+function buscarUnidad(lista, texto, tipo) {
+  var q = norm(texto).replace(/\s+/g, '');
+  if(!q) return [];
+  return lista.filter(function(u) {
+    if(tipo && u.tipo !== tipo) return false;
+    return u.claves.some(function(k) { var n = norm(k || '').replace(/\s+/g, ''); return n && (n === q || n.indexOf(q) >= 0 || (q.length >= 4 && q.indexOf(n) >= 0)); });
+  });
+}
+function diasEntre(a, b) { return Math.round((new Date(b + 'T12:00:00') - new Date(a + 'T12:00:00')) / 86400000); }
+
+async function herramientaVencimientos(nombre, inp, propuestas, hoy) {
+  var unidades = await unidadesFlota();
+  if(nombre === 'proponer_vencimiento') {
+    var cfg = DOCS[inp.unidad_tipo]; if(!cfg) return { error: 'unidad_tipo tiene que ser camion, semi o chofer' };
+    var hits = buscarUnidad(unidades, inp.unidad, inp.unidad_tipo);
+    if(!hits.length) return { error: 'No encontré ' + (inp.unidad_tipo === 'semi' ? 'el semirremolque' : inp.unidad_tipo === 'camion' ? 'el camión' : 'el chofer') + ' "' + inp.unidad + '". Opciones: ' + unidades.filter(function(u) { return u.tipo === inp.unidad_tipo; }).map(function(u) { return u.nombre; }).join(', ') };
+    if(hits.length > 1) return { error: 'Hay varias coincidencias, preguntá cuál: ' + hits.map(function(u) { return u.nombre; }).join(', ') };
+    var doc = norm(inp.documento).replace(/\s+/g, '_');
+    if(cfg.tipos.indexOf(doc) < 0) { var sin = DOC_SINON[norm(inp.documento)]; if(sin) doc = sin; }
+    if(cfg.tipos.indexOf(doc) < 0) return { error: 'Documento no válido para ' + inp.unidad_tipo + '. Opciones: ' + cfg.tipos.map(function(t) { return DOC_NOM[t]; }).join(', ') };
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(inp.vence || '')) return { error: 'La fecha de vencimiento tiene que ser AAAA-MM-DD' };
+    var u = hits[0];
+    var ant = chk(await sb().from(cfg.tabla).select('fecha_vencimiento').eq(cfg.campo, u.id).eq('tipo', doc).order('fecha_vencimiento', { ascending: false }).limit(1));
+    var p = { clase: 'vencimiento', tabla: cfg.tabla, campo: cfg.campo, unidad_id: u.id, unidad_tipo: inp.unidad_tipo, unidad: u.nombre, documento: doc, documento_nombre: DOC_NOM[doc] || doc,
+      fecha_vencimiento: inp.vence, notas: inp.notas || null, anterior: ant.length ? ant[0].fecha_vencimiento : null };
+    propuestas.push(p);
+    return { ok: true, mensaje: 'Vencimiento preparado. NO está guardado: el usuario lo confirma con el botón.' + (p.anterior ? ' Reemplaza al anterior, que vencía el ' + p.anterior + '.' : ''), propuesta: p };
+  }
+  // consulta
+  var dias = Number(inp.dias) || 30, limite = sumarDias(hoy, dias);
+  var r = await Promise.all(['camion', 'semi', 'chofer'].map(function(t) { return sb().from(DOCS[t].tabla).select(DOCS[t].campo + ',tipo,fecha_vencimiento,notas'); }));
+  var porId = {}; unidades.forEach(function(u) { porId[u.tipo + u.id] = u; });
+  var filtro = inp.unidad ? buscarUnidad(unidades, inp.unidad).map(function(u) { return u.tipo + u.id; }) : null;
+  var lista = [];
+  ['camion', 'semi', 'chofer'].forEach(function(t, i) {
+    chk(r[i]).forEach(function(d) {
+      var u = porId[t + d[DOCS[t].campo]]; if(!u || !d.fecha_vencimiento) return;
+      if(filtro && filtro.indexOf(t + u.id) < 0) return;
+      if(!inp.todos && d.fecha_vencimiento > limite) return;
+      var dd = diasEntre(hoy, d.fecha_vencimiento);
+      lista.push({ unidad: u.nombre, tipo_unidad: t, documento: DOC_NOM[d.tipo] || d.tipo, vence: d.fecha_vencimiento, dias: dd, estado: dd < 0 ? 'VENCIDO hace ' + (-dd) + ' días' : (dd === 0 ? 'vence HOY' : 'vence en ' + dd + ' días'), notas: d.notas || '' });
+    });
+  });
+  lista.sort(function(a, b) { return a.vence < b.vence ? -1 : 1; });
+  if(filtro && !filtro.length) return { error: 'No encontré la unidad o chofer "' + inp.unidad + '"' };
+  return { hoy: hoy, ventana_dias: inp.todos ? 'todos' : dias, vencidos: lista.filter(function(x) { return x.dias < 0; }).length, proximos: lista.filter(function(x) { return x.dias >= 0; }).length, detalle: lista.slice(0, 40) };
 }
 
 function sistema(usuario) {
@@ -255,7 +333,8 @@ function sistema(usuario) {
     '7) Si un cliente le pagó directo a un proveedor (ej. "Junes le transfirió 4 M a Copsa"), es pago_a_tercero con cuenta=cliente y destino=proveedor. Si le pagó a un chofer (ej. "San Jaime le transfirió 300 mil a Luis"), es pago_a_tercero con cuenta=cliente y chofer=Luis; si dicen que es por el sueldo de un mes (\"es del sueldo de septiembre\"), usá sueldo_de y es_pago_de_sueldo=true. ' +
     '8) Los cheques recibidos se cargan desde la sección Cheques con fotos (lee varios cheques y el N° interno); si quieren cargar cheques, indicales eso. ' +
     '9) Antes del 01/10/2026 los datos de ventas están incompletos para algunas cuentas; si consultan meses anteriores, avisalo. ' +
-    '10) Sé breve: listas cortas, totales al final. Si piden "más detalle", ampliá.';
+    '10) Sé breve: listas cortas, totales al final. Si piden "más detalle", ampliá. ' +
+    '11) Vencimientos de documentación (VTV, seguros, habilitaciones, registros, psicofísicos): para consultar usá vencimientos; para cargar o renovar usá proponer_vencimiento. "Semi", "cisterna", "tanque" o patentes de semis = semi; "UC-..", "tractor", "camión" = camion. Si la fecha viene como DD/MM/AAAA pasala a AAAA-MM-DD. Un vencimiento no es una operación de plata: no uses proponer_operacion para eso.';
 }
 
 async function conversar(mensajes, usuario) {
