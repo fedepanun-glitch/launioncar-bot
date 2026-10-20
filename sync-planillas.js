@@ -95,6 +95,48 @@ async function crearPlanilla(tabla, id, cuerpo) {
 }
 var _erroresPlanillas = [];
 
+// ══════════════════════════════════════════════════════════
+// RESPALDO COMPLETO DE LA BASE (semanal + a pedido) → Drive, vía Apps Script
+// ══════════════════════════════════════════════════════════
+var TABLAS_RESPALDO = ['terceros', 'terceros_alias', 'empresas', 'productos', 'productos_alias', 'operaciones', 'movimientos_cuenta',
+  'cheques', 'cheques_eventos', 'choferes', 'camiones', 'semirremolques', 'entregas_choferes', 'gastos_camiones', 'sueldos_choferes',
+  'documentos_camiones', 'documentos_semirremolques', 'documentos_choferes', 'viajes', 'perfiles', 'historial', 'stock', 'archivos'];
+var _respaldoEnCurso = false, _ultimoRespaldo = null;
+async function leerTablaCompleta(tabla) {
+  var filas = [], desde = 0, paso = 1000;
+  while(true) {
+    var r = await sb().from(tabla).select('*').range(desde, desde + paso - 1);
+    if(r.error) throw new Error(r.error.message);
+    filas = filas.concat(r.data || []);
+    if(!r.data || r.data.length < paso) break;
+    desde += paso;
+  }
+  return filas;
+}
+async function hacerRespaldo(motivo) {
+  if(_respaldoEnCurso) return { ok: false, error: 'Ya hay un respaldo en curso' };
+  _respaldoEnCurso = true;
+  try {
+    var datos = { creado: new Date().toISOString(), motivo: motivo || 'manual', version: 1, tablas: {}, cantidades: {}, no_respaldadas: {} };
+    for(var i = 0; i < TABLAS_RESPALDO.length; i++) {
+      var t = TABLAS_RESPALDO[i];
+      try { datos.tablas[t] = await leerTablaCompleta(t); datos.cantidades[t] = datos.tablas[t].length; }
+      catch(e) { datos.no_respaldadas[t] = e.message; }
+    }
+    var zlib = require('zlib');
+    var comprimido = zlib.gzipSync(Buffer.from(JSON.stringify(datos), 'utf8'));
+    var ahora = new Date(Date.now() - 3 * 3600 * 1000).toISOString();
+    var nombre = 'Respaldo ' + ahora.slice(0, 10) + ' ' + ahora.slice(11, 16).replace(':', 'h') + (motivo === 'semanal' ? '' : ' (' + (motivo || 'manual') + ')') + '.json.gz';
+    var r = await pedirAppsScript({ tipo: 'respaldo', nombre: nombre, datos_b64: comprimido.toString('base64'), conservar: 26 });
+    _ultimoRespaldo = { fecha: ahora, archivo: nombre, kb: Math.round(comprimido.length / 1024), cantidades: datos.cantidades, no_respaldadas: datos.no_respaldadas };
+    console.log('💾 Respaldo guardado en Drive:', nombre, _ultimoRespaldo.kb + ' KB');
+    return Object.assign({ ok: true, id: r.id }, _ultimoRespaldo);
+  } catch(e) {
+    console.error('❌ Respaldo falló:', e.message);
+    return { ok: false, error: e.message };
+  } finally { _respaldoEnCurso = false; }
+}
+
 async function sincronizarCuenta(terceroId) {
   var ter = chk(await sb().from('terceros').select('nombre,planilla_id,es_cliente,es_proveedor').eq('id', terceroId));
   if(!ter.length) return { omitida: true };
@@ -525,6 +567,18 @@ module.exports = function(app) {
     if(req.get('x-sync-secret') !== process.env.SYNC_SECRET) return res.status(401).json({ error: 'no autorizado' });
     programarFlota();
     res.json({ ok: true });
+  });
+  // Respaldo: ?esperar=1 espera el resultado (para usar desde el navegador); sin eso responde enseguida y lo hace de fondo
+  app.get('/respaldo/ahora', function(req, res) {
+    if(req.query.clave !== process.env.SYNC_SECRET) return res.status(401).json({ error: 'no autorizado' });
+    var motivo = req.query.motivo === 'semanal' ? 'semanal' : 'manual';
+    if(req.query.esperar) return hacerRespaldo(motivo).then(function(r) { res.json(r); });
+    res.json({ ok: true, iniciado: true, mensaje: 'Respaldo iniciado: en un minuto aparece en Drive' });
+    hacerRespaldo(motivo);
+  });
+  app.get('/respaldo/ultimo', function(req, res) {
+    if(req.query.clave !== process.env.SYNC_SECRET) return res.status(401).json({ error: 'no autorizado' });
+    res.json(_ultimoRespaldo || { mensaje: 'Todavía no se hizo ningún respaldo desde el último reinicio del bot' });
   });
   app.get('/apps-script/probar', function(req, res) {
     if(req.query.clave !== process.env.SYNC_SECRET) return res.status(401).json({ error: 'no autorizado' });

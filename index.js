@@ -35,7 +35,7 @@ var window_ultimoVenc = {};
 var window_pendiente = {};
 
 // ── DIAGNÓSTICO DE ARRANQUE ──
-console.log("=== BOT v8.6 - meses liquidados y pagados quedan cerrados ===");
+console.log("=== BOT v8.7 - respaldo semanal de la base ===");
 console.log("GOOGLE_SERVICE_ACCOUNT_JSON configurado:", !!process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
 console.log("SYNC_SECRET configurado:", !!process.env.SYNC_SECRET);
 console.log("APPS_SCRIPT_URL configurado:", !!process.env.APPS_SCRIPT_URL);
