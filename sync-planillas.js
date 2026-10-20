@@ -355,7 +355,7 @@ function filasChofer(ch, nombre, camion, ents, gastos, sueldos) {
   gastos.forEach(function(g) { var x = m(g.fecha.slice(0, 7)); x.gas.push(g); x.gas$ += Number(g.monto); });
   sueldos.forEach(function(s) { var x = m(s.anio + '-' + ('0' + s.mes).slice(-2)); x.sueldo = Number(s.total_bruto || s.total_neto || 0); x.estado = s.estado; });
   var claves = Object.keys(meses).sort().reverse();
-  var falta = function(x) { return x.sueldo === null ? '' : Math.round((x.sueldo - x.adel$ + x.gas$ - x.pago$) * 100) / 100; };
+  var falta = function(x) { if(x.sueldo === null) return ''; if(x.estado === 'pagado') return 0; return Math.round((x.sueldo - x.adel$ + x.gas$ - x.pago$) * 100) / 100; };
   var F = [];
   F.push({ v: ['Cuenta del chofer: ' + nombre], t: 'titulo' });
   F.push({ v: ['Camión: ' + (camion || 'sin asignar') + '  ·  Actualizado ' + ahoraAR() + '  ·  Se completa sola desde la app: no editar acá'], t: 'sub' });
@@ -364,10 +364,10 @@ function filasChofer(ch, nombre, camion, ents, gastos, sueldos) {
   F.push({ v: ['Mes del sueldo', 'Adelantos', 'Gastos que pagó el chofer (se le devuelven)', 'Sueldo liquidado', 'Pagos de sueldo', 'Falta pagarle', 'Estado'], t: 'cab' });
   claves.forEach(function(k) {
     var x = meses[k], f = falta(x);
-    var estado = x.sueldo === null ? 'Sin liquidar' : (Math.abs(f) < 1 ? 'Pagado completo' : (f > 0 ? 'Falta pagar' : 'Se le pagó de más'));
-    F.push({ v: [nomMes(k), x.adel$, x.gas$, x.sueldo === null ? '' : x.sueldo, x.pago$, f, estado], t: x.sueldo === null || Math.abs(f) >= 1 ? 'pendiente' : null });
+    var estado = x.sueldo === null ? 'Sin liquidar' : (x.estado === 'pagado' ? 'Cerrado (liquidado y pagado)' : (Math.abs(f) < 1 ? 'Pagado completo' : (f > 0 ? 'Falta pagar' : 'Se le pagó de más')));
+    F.push({ v: [nomMes(k), x.adel$, x.gas$, x.sueldo === null ? '' : x.sueldo, x.pago$, f, estado], t: x.sueldo === null || (x.estado !== 'pagado' && Math.abs(f) >= 1) ? 'pendiente' : null });
   });
-  F.push({ v: ['Falta pagarle = sueldo liquidado − adelantos + gastos que pagó − pagos de sueldo. Cada entrega cuenta en el mes del sueldo al que corresponde (aunque se haya pagado en otro mes).'], t: 'sub' });
+  F.push({ v: ['Falta pagarle = sueldo liquidado − adelantos + gastos que pagó − pagos de sueldo. Cada entrega cuenta en el mes del sueldo al que corresponde (aunque se haya pagado en otro mes). Un mes liquidado y marcado como Pagado queda cerrado en $0.'], t: 'sub' });
   F.push({ v: [] });
   F.push({ v: ['DETALLE POR MES DE SUELDO'], t: 'seccion' });
   claves.forEach(function(k) {
@@ -381,7 +381,7 @@ function filasChofer(ch, nombre, camion, ents, gastos, sueldos) {
     movs.sort(function(a, b) { return a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0; });
     movs.forEach(function(r) { r[0] = fechaAR(r[0]); F.push({ v: r }); });
     F.push({ v: ['Total ' + nomMes(k).toLowerCase(), '', '', '', x.adel$ + x.pago$, x.gas$], t: 'total' });
-    if(x.sueldo !== null) F.push({ v: ['Sueldo liquidado: $ ' + x.sueldo.toLocaleString('es-AR') + '   →   falta pagarle: $ ' + Number(falta(x)).toLocaleString('es-AR')], t: 'sub' });
+    if(x.sueldo !== null) F.push({ v: ['Sueldo liquidado: $ ' + x.sueldo.toLocaleString('es-AR') + (x.estado === 'pagado' ? '   →   mes cerrado (liquidado y pagado)' : '   →   falta pagarle: $ ' + Number(falta(x)).toLocaleString('es-AR'))], t: 'sub' });
     F.push({ v: [] });
   });
   if(!claves.length) F.push({ v: ['Todavía no hay movimientos cargados.'] });
@@ -468,9 +468,9 @@ async function sincronizarFlota() {
     var m = function(k) { return meses[k] = meses[k] || { a: 0, p: 0, g: 0, s: null }; };
     ents.forEach(function(e) { if(e.chofer_id !== ch.id) return; var x = m(e.periodo || e.fecha.slice(0, 7)); if(e.categoria === 'pago_sueldo') x.p += Number(e.monto); else x.a += Number(e.monto); });
     gastos.forEach(function(g) { if(g.chofer_id === ch.id) m(g.fecha.slice(0, 7)).g += Number(g.monto); });
-    sueldos.forEach(function(s) { if(s.chofer_id === ch.id) m(s.anio + '-' + ('0' + s.mes).slice(-2)).s = Number(s.total_bruto || s.total_neto || 0); });
-    Object.keys(meses).sort().reverse().slice(0, 6).forEach(function(k) { var x = meses[k]; var f = x.s === null ? 'Sin liquidar' : Math.round((x.s - x.a + x.g - x.p) * 100) / 100;
-      RC.push({ v: [nomCh[ch.id], nomMes(k), x.a, x.g, x.s === null ? '' : x.s, x.p, f], t: x.s === null || Math.abs(f) >= 1 ? 'pendiente' : null }); });
+    sueldos.forEach(function(s) { if(s.chofer_id === ch.id) { var xm = m(s.anio + '-' + ('0' + s.mes).slice(-2)); xm.s = Number(s.total_bruto || s.total_neto || 0); xm.pagado = s.estado === 'pagado'; } });
+    Object.keys(meses).sort().reverse().slice(0, 6).forEach(function(k) { var x = meses[k]; var f = x.s === null ? 'Sin liquidar' : (x.pagado ? 'Cerrado' : Math.round((x.s - x.a + x.g - x.p) * 100) / 100);
+      RC.push({ v: [nomCh[ch.id], nomMes(k), x.a, x.g, x.s === null ? '' : x.s, x.p, f], t: x.s === null || (!x.pagado && Math.abs(f) >= 1) ? 'pendiente' : null }); });
   });
   var RK = [{ v: ['Camiones: gastos por mes'], t: 'titulo' }, { v: ['Actualizado ' + ahoraAR() + ' · el detalle de cada uno está en la carpeta "Camiones"'], t: 'sub' }, { v: [] },
             { v: ['Camión', 'Mes'].concat(CATS.map(function(k) { return CAT_NOM[k]; })).concat(['Total']), t: 'cab' }];
