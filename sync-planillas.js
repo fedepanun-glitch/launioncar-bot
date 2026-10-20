@@ -127,7 +127,7 @@ async function hacerRespaldo(motivo) {
     var comprimido = zlib.gzipSync(Buffer.from(JSON.stringify(datos), 'utf8'));
     var ahora = new Date(Date.now() - 3 * 3600 * 1000).toISOString();
     var nombre = 'Respaldo ' + ahora.slice(0, 10) + ' ' + ahora.slice(11, 16).replace(':', 'h') + (motivo === 'semanal' ? '' : ' (' + (motivo || 'manual') + ')') + '.json.gz';
-    var r = await pedirAppsScript({ tipo: 'respaldo', nombre: nombre, datos_b64: comprimido.toString('base64'), conservar: 26 });
+    var r = await pedirAppsScript({ tipo: 'respaldo', nombre: nombre, datos_b64: comprimido.toString('base64'), conservar: 53 });
     _ultimoRespaldo = { fecha: ahora, archivo: nombre, kb: Math.round(comprimido.length / 1024), cantidades: datos.cantidades, no_respaldadas: datos.no_respaldadas };
     console.log('💾 Respaldo guardado en Drive:', nombre, _ultimoRespaldo.kb + ' KB');
     return Object.assign({ ok: true, id: r.id }, _ultimoRespaldo);
