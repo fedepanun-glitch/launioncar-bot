@@ -181,15 +181,15 @@ async function sincronizarCuenta(terceroId) {
   var saldoInicial = Math.round(previos.reduce(function(s, m) { return s + Number(m.importe || 0); }, 0) * 100) / 100;
   var sh = sheetsCliente();
   var id = ter[0].planilla_id;
-  await sh.spreadsheets.values.batchClear({ spreadsheetId: id, requestBody: { ranges: ['Cuenta!A10:G1000', 'Cuenta!I10:L1000'] } });
-  await sh.spreadsheets.values.update({ spreadsheetId: id, range: 'Cuenta!A9:H9', valueInputOption: 'USER_ENTERED',
-    requestBody: { values: [['01/10/2026', 'Saldo inicial', 'Saldo al 30/09/2026 (según la app, incluye conciliaciones)', '', '', '', '', saldoInicial]] } });
+  await conReintento(function() { return sh.spreadsheets.values.batchClear({ spreadsheetId: id, requestBody: { ranges: ['Cuenta!A10:G1000', 'Cuenta!I10:L1000'] } }); });
+  await conReintento(function() { return sh.spreadsheets.values.update({ spreadsheetId: id, range: 'Cuenta!A9:H9', valueInputOption: 'USER_ENTERED',
+    requestBody: { values: [['01/10/2026', 'Saldo inicial', 'Saldo al 30/09/2026 (según la app, incluye conciliaciones)', '', '', '', '', saldoInicial]] } }); });
   if(izq.length) {
     var fin = 9 + izq.length;
-    await sh.spreadsheets.values.batchUpdate({ spreadsheetId: id, requestBody: { valueInputOption: 'USER_ENTERED', data: [
+    await conReintento(function() { return sh.spreadsheets.values.batchUpdate({ spreadsheetId: id, requestBody: { valueInputOption: 'USER_ENTERED', data: [
       { range: 'Cuenta!A10:G' + fin, values: izq },
       { range: 'Cuenta!I10:L' + fin, values: der }
-    ] } });
+    ] } }); });
   }
   return { cuenta: ter[0].nombre, movimientos: izq.length };
 }
@@ -359,26 +359,45 @@ function armarFormato(sheetId, filas, anchos, colsPesos) {
 }
 
 // Escribe una hoja (la primera del archivo, o la pestaña indicada) con sus valores y formato
+// Reintenta cuando Google pide esperar (límite de escrituras por minuto) o falla momentáneamente
+async function conReintento(fn) {
+  for(var intento = 0; ; intento++) {
+    try { return await fn(); }
+    catch(e) {
+      var cod = e.code || (e.response && e.response.status);
+      if(intento >= 4 || !(cod === 429 || cod >= 500 || /quota|rate|Rate Limit/i.test(e.message || ''))) throw e;
+      await new Promise(function(ok) { setTimeout(ok, 15000 * (intento + 1)); });
+    }
+  }
+}
+var _ultimoEscrito = {};   // lo último que se escribió en cada hoja (para no reescribir si no cambió)
 async function escribirHoja(sh, spreadsheetId, filas, anchos, colsPesos, titulo) {
-  var info = await sh.spreadsheets.get({ spreadsheetId: spreadsheetId, fields: 'properties.locale,sheets.properties(sheetId,title)' });
+  var clave = spreadsheetId + '|' + (titulo || 'Cuenta');
+  var huella = JSON.stringify(filas.map(function(f) { return f.t === 'sub' && /Actualizado/.test(String(f.v[0])) ? '' : f.v; }));
+  if(_ultimoEscrito[clave] === huella) return 'sin cambios';
+  var info = await conReintento(function() { return sh.spreadsheets.get({ spreadsheetId: spreadsheetId, fields: 'properties.locale,sheets.properties(sheetId,title)' }); });
   var hojas = info.data.sheets || [], hoja = null, pre = [];
   if(titulo) {
     hoja = hojas.filter(function(x) { return x.properties.title === titulo; })[0];
     if(!hoja) {
-      var add = await sh.spreadsheets.batchUpdate({ spreadsheetId: spreadsheetId, requestBody: { requests: [{ addSheet: { properties: { title: titulo } } }] } });
+      var add = await conReintento(function() { return sh.spreadsheets.batchUpdate({ spreadsheetId: spreadsheetId, requestBody: { requests: [{ addSheet: { properties: { title: titulo } } }] } }); });
       hoja = { properties: add.data.replies[0].addSheet.properties };
     }
   } else {
     hoja = hojas[0];
-    if(hoja.properties.title !== 'Cuenta') pre.push({ updateSheetProperties: { properties: { sheetId: hoja.properties.sheetId, title: 'Cuenta' }, fields: 'title' } });
+    if(hoja.properties.title !== 'Cuenta') {
+      await conReintento(function() { return sh.spreadsheets.batchUpdate({ spreadsheetId: spreadsheetId, requestBody: { requests: [{ updateSheetProperties: { properties: { sheetId: hoja.properties.sheetId, title: 'Cuenta' }, fields: 'title' } }] } }); });
+    }
   }
   if(info.data.properties.locale !== 'es_AR') pre.push({ updateSpreadsheetProperties: { properties: { locale: 'es_AR', timeZone: 'America/Argentina/Buenos_Aires' }, fields: 'locale,timeZone' } });
   var nombre = titulo || 'Cuenta';
-  await sh.spreadsheets.values.clear({ spreadsheetId: spreadsheetId, range: "'" + (pre.length && !titulo ? hoja.properties.title : nombre) + "'!A1:Z5000" });
+  var ancho = 26, valores = filas.map(function(f) { var v = f.v.slice(); while(v.length < ancho) v.push(''); return v; });
+  // 1) primero los datos (pisando lo anterior), 2) después se borra lo que sobra abajo, 3) al final el formato
+  await conReintento(function() { return sh.spreadsheets.values.update({ spreadsheetId: spreadsheetId, range: "'" + nombre + "'!A1:Z" + valores.length, valueInputOption: 'USER_ENTERED', requestBody: { values: valores } }); });
+  await conReintento(function() { return sh.spreadsheets.values.clear({ spreadsheetId: spreadsheetId, range: "'" + nombre + "'!A" + (valores.length + 1) + ':Z5000' }); });
   var req = pre.concat(armarFormato(hoja.properties.sheetId, filas, anchos, colsPesos));
-  await sh.spreadsheets.batchUpdate({ spreadsheetId: spreadsheetId, requestBody: { requests: req } });
-  await sh.spreadsheets.values.update({ spreadsheetId: spreadsheetId, range: "'" + nombre + "'!A1", valueInputOption: 'USER_ENTERED',
-    requestBody: { values: filas.map(function(f) { return f.v; }) } });
+  await conReintento(function() { return sh.spreadsheets.batchUpdate({ spreadsheetId: spreadsheetId, requestBody: { requests: req } }); });
+  _ultimoEscrito[clave] = huella;
   return hoja.properties.sheetId;
 }
 
@@ -483,10 +502,8 @@ async function sincronizarFlota() {
     }
     try {
       var F = filasChofer(ch, nomCh[ch.id], codCam[camDeCh[ch.id]], ents.filter(function(e) { return e.chofer_id === ch.id; }), gastos.filter(function(g) { return g.chofer_id === ch.id; }), sueldos.filter(function(s) { return s.chofer_id === ch.id; }));
-      await escribirHoja(sh, ch.planilla_id, F, [170, 130, 170, 140, 140, 140, 140], [1, 2, 3, 4, 5]);
-      hechas++;
+      if(await escribirHoja(sh, ch.planilla_id, F, [170, 130, 170, 140, 140, 140, 140], [1, 2, 3, 4, 5]) !== 'sin cambios') { hechas++; await pausa(); }
     } catch(e) { errores.push(nomCh[ch.id] + ': ' + e.message); }
-    await pausa();
   }
   // 2) un archivo por camión
   for(var j = 0; j < cams.length; j++) {
@@ -497,10 +514,8 @@ async function sincronizarFlota() {
       catch(e) { errores.push(c.codigo + ': ' + e.message); continue; }
     }
     try {
-      await escribirHoja(sh, c.planilla_id, filasCamion(c, nomCh[c.chofer_id], gastos.filter(function(g) { return g._cam === c.id; })), [150, 110, 110, 110, 110, 110, 110, 110, 110, 130], [1, 2, 3, 4, 5, 6, 7, 8, 9]);
-      hechas++;
+      if(await escribirHoja(sh, c.planilla_id, filasCamion(c, nomCh[c.chofer_id], gastos.filter(function(g) { return g._cam === c.id; })), [150, 110, 110, 110, 110, 110, 110, 110, 110, 130], [1, 2, 3, 4, 5, 6, 7, 8, 9]) !== 'sin cambios') { hechas++; await pausa(); }
     } catch(e) { errores.push(c.codigo + ': ' + e.message); }
-    await pausa();
   }
   // 3) tablero general: todos los choferes y todos los camiones por mes
   var RC = [{ v: ['Choferes: resumen por mes'], t: 'titulo' }, { v: ['Actualizado ' + ahoraAR() + ' · el detalle de cada uno está en la carpeta "Choferes"'], t: 'sub' }, { v: [] },
@@ -533,14 +548,17 @@ async function sincronizarFlota() {
   return { archivos_actualizados: hechas, errores: errores };
 }
 
-var esperandoFlota = null;
+var esperandoFlota = null, flotaCorriendo = false, flotaPendiente = false;
 function programarFlota() {
   if(esperandoFlota) clearTimeout(esperandoFlota);
   esperandoFlota = setTimeout(function() {
     esperandoFlota = null;
-    sincronizarFlota().then(function(r) { console.log('📗 Planilla de camiones y choferes actualizada', JSON.stringify(r)); })
-      .catch(function(e) { console.error('❌ Error planilla de camiones y choferes:', e.message); });
-  }, 8000);
+    if(flotaCorriendo) { flotaPendiente = true; return; }
+    flotaCorriendo = true;
+    sincronizarFlota().then(function(r) { console.log('📗 Planillas de camiones y choferes actualizadas', JSON.stringify(r)); })
+      .catch(function(e) { console.error('❌ Error planillas de camiones y choferes:', e.message); })
+      .then(function() { flotaCorriendo = false; if(flotaPendiente) { flotaPendiente = false; programarFlota(); } });
+  }, 15000);
 }
 
 module.exports = function(app) {
@@ -589,6 +607,7 @@ module.exports = function(app) {
   });
   app.get('/sync-flota/ahora', function(req, res) {
     if(req.query.clave !== process.env.SYNC_SECRET) return res.status(401).json({ error: 'no autorizado' });
+    _ultimoEscrito = {};  // reescribir todo, aunque no haya cambios
     sincronizarFlota().then(function(r) { res.json(r); }).catch(function(e) { res.status(500).json({ error: e.message }); });
   });
   app.post('/sync-cheques', function(req, res) {

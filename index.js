@@ -35,7 +35,7 @@ var window_ultimoVenc = {};
 var window_pendiente = {};
 
 // ── DIAGNÓSTICO DE ARRANQUE ──
-console.log("=== BOT v8.8 - respaldos de un año ===");
+console.log("=== BOT v8.9 - planillas sin cortes (reintentos y solo lo que cambia) ===");
 console.log("GOOGLE_SERVICE_ACCOUNT_JSON configurado:", !!process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
 console.log("SYNC_SECRET configurado:", !!process.env.SYNC_SECRET);
 console.log("APPS_SCRIPT_URL configurado:", !!process.env.APPS_SCRIPT_URL);
